@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "users": {
+      "firestorePath": "users/{userId}",
+      "schema": {
+        "uid": "string",
+        "phoneNumber": "string",
+        "displayName": "string",
+        "photoURL": "string?",
+        "isOnline": "boolean",
+        "lastSeen": "timestamp",
+        "createdAt": "timestamp",
+        "updatedAt": "timestamp"
+      },
+      "securityRules": {
+        "read": "request.auth != null",
+        "write": "request.auth != null && request.auth.uid == userId"
+      }
+    },
+    "chats": {
+      "firestorePath": "chats/{chatId}",
+      "schema": {
+        "id": "string",
+        "participants": "string[]",
+        "participantNames": "map",
+        "participantPhotos": "map",
+        "lastMessageText": "string",
+        "lastMessageTimestamp": "timestamp",
+        "typing": "map",
+        "createdAt": "timestamp",
+        "updatedAt": "timestamp"
+      },
+      "securityRules": {
+        "read": "request.auth != null && request.auth.uid in resource.data.participants",
+        "create": "request.auth != null && request.auth.uid in request.resource.data.participants",
+        "update": "request.auth != null && request.auth.uid in resource.data.participants",
+        "delete": "request.auth != null && request.auth.uid in resource.data.participants"
+      }
+    },
+    "messages": {
+      "firestorePath": "chats/{chatId}/messages/{messageId}",
+      "schema": {
+        "id": "string",
+        "senderId": "string",
+        "text": "string",
+        "imageUrl": "string?",
+        "timestamp": "timestamp",
+        "ttlHours": "number",
+        "expiresAt": "timestamp"
+      },
+      "securityRules": {
+        "read": "request.auth != null && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants",
+        "create": "request.auth != null && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants",
+        "update": "request.auth != null && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants",
+        "delete": "request.auth != null && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants"
+      }
+    }
+  }
+}

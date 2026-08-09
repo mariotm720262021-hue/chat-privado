@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Reglas para perfiles de usuario
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Reglas para chats privados y sus subcolecciones de mensajes
+    match /chats/{chatId} {
+      allow read, write: if true;
+
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+    }
+  }
+}
+
