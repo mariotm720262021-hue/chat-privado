@@ -21,6 +21,29 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 -- Index para búsquedas rápidas por username
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
 
+-- Trigger para crear perfil automáticamente cuando un nuevo usuario se registra en Auth
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.profiles (id, username, display_name, avatar_url, is_online, last_seen)
+  VALUES (
+    new.id,
+    COALESCE(new.raw_user_meta_data->>'username', SPLIT_PART(new.email, '@', 1)),
+    COALESCE(new.raw_user_meta_data->>'display_name', SPLIT_PART(new.email, '@', 1)),
+    'https://api.dicebear.com/7.x/bottts/svg?seed=' || COALESCE(new.raw_user_meta_data->>'username', SPLIT_PART(new.email, '@', 1)),
+    true,
+    NOW()
+  )
+  ON CONFLICT (id) DO NOTHING;
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
 -- 3. TABLA DE CONVERSACIONES (conversations)
 CREATE TABLE IF NOT EXISTS public.conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

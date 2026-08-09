@@ -223,6 +223,47 @@ export async function getProfile(userId: string): Promise<SupabaseProfile | null
 }
 
 /**
+ * Asegura que exista un registro en la tabla public.profiles para el ID dado.
+ * Si no existe, lo crea automáticamente basado en los datos de auth.users.
+ */
+export async function ensureProfileExists(userId: string, force: boolean = false): Promise<SupabaseProfile | null> {
+  if (!userId) return null;
+
+  if (!force) {
+    const existing = await getProfile(userId);
+    if (existing) return existing;
+  }
+
+  const { data: { user } } = await supabase.auth.getUser();
+  const email = user?.email || "";
+  const emailPrefix = email ? email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "") : "usuario";
+  const username = user?.user_metadata?.username || emailPrefix || `user_${userId.substring(0, 6)}`;
+  const displayName = user?.user_metadata?.display_name || username;
+
+  const profileData: SupabaseProfile = {
+    id: userId,
+    username: username,
+    display_name: displayName,
+    avatar_url: `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`,
+    is_online: true,
+    last_seen: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .upsert(profileData)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Aviso al asegurar perfil en public.profiles:", error);
+    return profileData;
+  }
+
+  return data || profileData;
+}
+
+/**
  * Busca usuarios por nombre de usuario, correo o nombre visible.
  */
 export async function searchProfiles(searchTerm: string, currentUserId: string): Promise<SupabaseProfile[]> {
@@ -246,6 +287,10 @@ export async function searchProfiles(searchTerm: string, currentUserId: string):
  * Crea una conversación privada entre dos usuarios.
  */
 export async function createPrivateConversation(currentUserId: string, otherUserId: string): Promise<string> {
+  // Asegurar que existan los perfiles en public.profiles
+  await ensureProfileExists(currentUserId);
+  await ensureProfileExists(otherUserId);
+
   // Comprobar si ya existe una conversación privada entre ambos
   const { data: myConvs } = await supabase
     .from("conversation_participants")
@@ -304,6 +349,9 @@ export async function createPrivateConversation(currentUserId: string, otherUser
  * Crea un grupo con un código de invitación único y expiración de 24h.
  */
 export async function createGroupConversation(currentUserId: string, groupName: string): Promise<SupabaseConversation> {
+  // Asegurar obligatoriamente que el usuario tenga su perfil creado en public.profiles
+  await ensureProfileExists(currentUserId, true);
+
   const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
@@ -319,7 +367,33 @@ export async function createGroupConversation(currentUserId: string, groupName: 
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    // Si la clave foránea falló, reintentar asegurar el perfil e intentar de nuevo
+    if (error.message?.includes("foreign key") || error.code === "23503") {
+      await ensureProfileExists(currentUserId, true);
+      const { data: retryGroup, error: retryErr } = await supabase
+        .from("conversations")
+        .insert({
+          type: "group",
+          name: groupName,
+          invite_code: inviteCode,
+          created_by: currentUserId,
+          expires_at: expiresAt,
+        })
+        .select()
+        .single();
+
+      if (retryErr) throw retryErr;
+      
+      await supabase.from("conversation_participants").insert({
+        conversation_id: retryGroup.id,
+        user_id: currentUserId,
+      });
+
+      return retryGroup;
+    }
+    throw error;
+  }
 
   // Agregar al creador como participante
   await supabase.from("conversation_participants").insert({
@@ -334,6 +408,7 @@ export async function createGroupConversation(currentUserId: string, groupName: 
  * Se une a un grupo mediante código de invitación.
  */
 export async function joinGroupWithInviteCode(currentUserId: string, inviteCode: string): Promise<string> {
+  await ensureProfileExists(currentUserId);
   const codeClean = inviteCode.trim().toUpperCase();
   
   const { data: conv, error } = await supabase
@@ -438,6 +513,7 @@ export async function sendMessage(
   mediaUrl?: string,
   burnSeconds?: number
 ) {
+  await ensureProfileExists(senderId);
   const expiresAt = burnSeconds ? new Date(Date.now() + burnSeconds * 1000).toISOString() : null;
 
   const { data, error } = await supabase

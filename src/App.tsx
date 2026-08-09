@@ -50,6 +50,7 @@ import {
   loginWithEmail, 
   logoutUser, 
   getProfile, 
+  ensureProfileExists,
   searchProfiles, 
   createPrivateConversation, 
   createGroupConversation, 
@@ -167,7 +168,10 @@ export default function App() {
       setLoading(true);
       if (session?.user) {
         setCurrentUser(session.user);
-        const profile = await getProfile(session.user.id);
+        let profile = await getProfile(session.user.id);
+        if (!profile) {
+          profile = await ensureProfileExists(session.user.id, true);
+        }
         setUserProfile(profile);
         setCurrentView("chats");
       } else {
