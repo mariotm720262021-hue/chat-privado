@@ -54,6 +54,7 @@ export interface SupabaseProfile {
   username: string;
   display_name: string;
   avatar_url?: string;
+  status_message?: string;
   is_online?: boolean;
   last_seen?: string;
   created_at?: string;
@@ -74,7 +75,7 @@ export interface SupabaseMessage {
   conversation_id: string;
   sender_id: string;
   content: string;
-  type: "text" | "image";
+  type: "text" | "image" | "audio";
   media_url?: string;
   created_at: string;
   expires_at?: string; // Para mensajes temporales con autodestrucción
@@ -503,13 +504,81 @@ export async function getUserConversations(currentUserId: string): Promise<any[]
 }
 
 /**
- * Envía un mensaje (texto o imagen con expiración temporal)
+ * Actualiza el perfil de un usuario (display_name, status_message, avatar_url)
+ */
+export async function updateUserProfile(
+  userId: string,
+  updates: { display_name?: string; status_message?: string; avatar_url?: string }
+): Promise<SupabaseProfile | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .update(updates)
+    .eq("id", userId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Sube una imagen de avatar al Storage de Supabase en el bucket 'avatars'.
+ */
+export async function uploadAvatarToStorage(file: File, userId: string): Promise<string> {
+  const fileExt = file.name.split(".").pop() || "png";
+  const fileName = `${userId}/avatar_${Date.now()}.${fileExt}`;
+
+  const { error } = await supabase.storage
+    .from("avatars")
+    .upload(fileName, file, {
+      cacheControl: "3600",
+      upsert: true,
+    });
+
+  if (error) {
+    throw new Error(`Error al subir avatar a Supabase Storage: ${error.message}`);
+  }
+
+  const { data: publicUrlData } = supabase.storage
+    .from("avatars")
+    .getPublicUrl(fileName);
+
+  return publicUrlData.publicUrl;
+}
+
+/**
+ * Sube un archivo de audio/nota de voz al Storage de Supabase en 'chat-attachments'.
+ */
+export async function uploadAudioToStorage(audioBlob: Blob, userId: string): Promise<string> {
+  const fileName = `${userId}/voice_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.webm`;
+
+  const { error } = await supabase.storage
+    .from("chat-attachments")
+    .upload(fileName, audioBlob, {
+      contentType: audioBlob.type || "audio/webm",
+      cacheControl: "3600",
+      upsert: false,
+    });
+
+  if (error) {
+    throw new Error(`Error al subir nota de voz: ${error.message}`);
+  }
+
+  const { data: publicUrlData } = supabase.storage
+    .from("chat-attachments")
+    .getPublicUrl(fileName);
+
+  return publicUrlData.publicUrl;
+}
+
+/**
+ * Envía un mensaje (texto, imagen o nota de voz audio con expiración temporal)
  */
 export async function sendMessage(
   conversationId: string,
   senderId: string,
   content: string,
-  type: "text" | "image" = "text",
+  type: "text" | "image" | "audio" = "text",
   mediaUrl?: string,
   burnSeconds?: number
 ) {
@@ -560,13 +629,17 @@ export async function uploadImageToStorage(file: File, userId: string): Promise<
 }
 
 /**
- * Carga mensajes de una conversación, descartando los quemados o expirados.
+ * Carga mensajes de una conversación, filtrando solo los creados en las últimas 5 horas y descartando los quemados o expirados.
+ * WHERE created_at >= NOW() - INTERVAL '5 hours'
  */
 export async function getConversationMessages(conversationId: string): Promise<SupabaseMessage[]> {
+  const fiveHoursAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+
   const { data, error } = await supabase
     .from("messages")
     .select("*")
     .eq("conversation_id", conversationId)
+    .gte("created_at", fiveHoursAgo)
     .order("created_at", { ascending: true });
 
   if (error) return [];

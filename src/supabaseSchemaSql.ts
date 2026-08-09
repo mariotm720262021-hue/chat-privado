@@ -13,10 +13,14 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   username TEXT UNIQUE NOT NULL,
   display_name TEXT NOT NULL,
   avatar_url TEXT,
+  status_message TEXT,
   is_online BOOLEAN DEFAULT false,
   last_seen TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS status_message text;
 
 -- Index para búsquedas rápidas por username
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
@@ -73,12 +77,16 @@ CREATE TABLE IF NOT EXISTS public.messages (
   conversation_id UUID REFERENCES public.conversations(id) ON DELETE CASCADE,
   sender_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
-  type TEXT CHECK (type IN ('text', 'image')) DEFAULT 'text',
+  type TEXT CHECK (type IN ('text', 'image', 'audio')) DEFAULT 'text',
   media_url TEXT,
   expires_at TIMESTAMPTZ,
   is_burned BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Asegurar tipo de mensaje 'audio' en instalaciones existentes
+ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_type_check;
+ALTER TABLE public.messages ADD CONSTRAINT messages_type_check CHECK (type IN ('text', 'image', 'audio'));
 
 -- Index para ordenamiento y consultas por conversación
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON public.messages(conversation_id, created_at);
@@ -195,12 +203,16 @@ CREATE POLICY "Enviar mensajes en conversaciones donde participa"
     )
   );
 
--- 8. CREACIÓN DEL BUCKET EN SUPABASE STORAGE (chat-attachments)
+-- 8. CREACIÓN DE BUCKETS EN SUPABASE STORAGE (chat-attachments, avatars)
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('chat-attachments', 'chat-attachments', true)
 ON CONFLICT (id) DO NOTHING;
 
--- Políticas de Storage para imágenes
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Políticas de Storage para imágenes y notas de voz
 DROP POLICY IF EXISTS "Permitir ver adjuntos de chat a autenticados" ON storage.objects;
 CREATE POLICY "Permitir ver adjuntos de chat a autenticados"
   ON storage.objects FOR SELECT
@@ -212,4 +224,26 @@ CREATE POLICY "Permitir subir adjuntos de chat a autenticados"
   ON storage.objects FOR INSERT
   TO authenticated
   WITH CHECK (bucket_id = 'chat-attachments');
+
+-- Políticas de Storage para avatares
+DROP POLICY IF EXISTS "Permitir ver avatares a todos" ON storage.objects;
+CREATE POLICY "Permitir ver avatares a todos"
+  ON storage.objects FOR SELECT
+  TO public
+  USING (bucket_id = 'avatars');
+
+DROP POLICY IF EXISTS "Permitir subir avatares a autenticados" ON storage.objects;
+CREATE POLICY "Permitir subir avatares a autenticados"
+  ON storage.objects FOR INSERT
+  TO authenticated
+  WITH CHECK (bucket_id = 'avatars');
+
+-- 9. FUNCIÓN DE LIMPIEZA DE CHAT A LAS 5 HORAS
+CREATE OR REPLACE FUNCTION delete_old_chat_data() 
+RETURNS void AS $$
+BEGIN
+  DELETE FROM public.messages WHERE created_at < NOW() - INTERVAL '5 hours';
+  DELETE FROM public.conversations WHERE created_at < NOW() - INTERVAL '5 hours' AND type = 'group';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 `;

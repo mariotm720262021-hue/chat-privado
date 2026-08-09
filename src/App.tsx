@@ -39,7 +39,12 @@ import {
   RefreshCw,
   ExternalLink,
   AtSign,
-  QrCode
+  QrCode,
+  Mic,
+  Square,
+  Smile,
+  Edit3,
+  Loader2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -58,6 +63,7 @@ import {
   getUserConversations, 
   sendMessage, 
   uploadImageToStorage, 
+  uploadAudioToStorage,
   getConversationMessages, 
   subscribeToMessages,
   updateSupabaseCredentials,
@@ -75,6 +81,9 @@ import {
   formatTime, 
   generateInitialsAvatar 
 } from "./app";
+
+import { AudioPlayer } from "./components/AudioPlayer";
+import { ProfileModal } from "./components/ProfileModal";
 
 export default function App() {
   // Estado de Supabase Connection
@@ -141,6 +150,105 @@ export default function App() {
 
   // Lightbox Foto
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+  // Modal Editar Perfil
+  const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+
+  // Notas de Voz / MediaRecorder
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [recordingTime, setRecordingTime] = useState<number>(0);
+  const [isUploadingVoice, setIsUploadingVoice] = useState<boolean>(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Iniciar Grabación de Nota de Voz
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Error al acceder al micrófono:", err);
+      alert("No se pudo acceder al micrófono. Por favor permite el permiso en tu navegador.");
+    }
+  };
+
+  // Detener y Enviar Nota de Voz
+  const stopAndSendRecording = async () => {
+    if (!mediaRecorderRef.current || !activeChat?.id || !currentUser?.id) return;
+
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+
+    setIsUploadingVoice(true);
+
+    mediaRecorderRef.current.onstop = async () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      const ttlSeconds = selectedTTLSeconds;
+
+      try {
+        const audioUrl = await uploadAudioToStorage(audioBlob, currentUser.id);
+        await sendMessage(
+          activeChat.id,
+          currentUser.id,
+          "🎤 Nota de voz",
+          "audio",
+          audioUrl,
+          ttlSeconds > 0 ? ttlSeconds : undefined
+        );
+        reloadConversations();
+      } catch (err: any) {
+        console.error("Error guardando nota de voz:", err);
+        alert(err.message || "Error al enviar la nota de voz.");
+      } finally {
+        setIsRecording(false);
+        setRecordingTime(0);
+        setIsUploadingVoice(false);
+        // Detener las pistas de audio
+        mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+
+    mediaRecorderRef.current.stop();
+  };
+
+  // Cancelar Grabación
+  const cancelRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+    }
+    setIsRecording(false);
+    setRecordingTime(0);
+    audioChunksRef.current = [];
+  };
+
+  const formatTimer = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins < 10 ? "0" : ""}${mins}:${secs < 10 ? "0" : ""}${secs}`;
+  };
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -630,17 +738,31 @@ export default function App() {
             
             {/* Header Lateral */}
             <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
-              <div className="flex items-center gap-3">
-                <img 
-                  src={userProfile?.avatar_url || generateInitialsAvatar(userProfile?.display_name || "U")} 
-                  alt="Avatar" 
-                  className="w-10 h-10 rounded-full border border-indigo-500/30 object-cover"
-                />
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold text-white truncate">{userProfile?.display_name || "Usuario"}</h2>
-                  <p className="text-[11px] text-indigo-400 font-mono truncate">@{userProfile?.username || "usuario"}</p>
+              <button 
+                onClick={() => setShowProfileModal(true)}
+                className="flex items-center gap-3 text-left group hover:opacity-90 transition-opacity min-w-0 flex-1 mr-2"
+                title="Editar mi Perfil"
+              >
+                <div className="relative">
+                  <img 
+                    src={userProfile?.avatar_url || generateInitialsAvatar(userProfile?.display_name || "U")} 
+                    alt="Avatar" 
+                    className="w-10 h-10 rounded-full border border-indigo-500/30 object-cover group-hover:border-indigo-400 transition-colors"
+                  />
+                  <div className="absolute -bottom-1 -right-1 bg-indigo-600 p-0.5 rounded-full text-white text-[9px]">
+                    <Edit3 className="w-2.5 h-2.5" />
+                  </div>
                 </div>
-              </div>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-white truncate flex items-center gap-1">
+                    <span>{userProfile?.display_name || "Usuario"}</span>
+                  </h2>
+                  <p className="text-[11px] text-indigo-400 font-mono truncate">@{userProfile?.username || "usuario"}</p>
+                  {userProfile?.status_message && (
+                    <p className="text-[10px] text-slate-400 truncate italic mt-0.5">"{userProfile.status_message}"</p>
+                  )}
+                </div>
+              </button>
 
               <div className="flex items-center gap-1">
                 <button
@@ -811,6 +933,11 @@ export default function App() {
                             : `@${activeChat.otherUser?.username || "usuario"}`}
                         </span>
                       </p>
+                      {activeChat.type === "private" && activeChat.otherUser?.status_message && (
+                        <p className="text-[10px] text-emerald-400 truncate italic">
+                          "{activeChat.otherUser.status_message}"
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -860,7 +987,12 @@ export default function App() {
                                 className="w-full max-h-60 object-cover rounded-xl mb-2 cursor-pointer hover:opacity-95 transition-opacity"
                               />
                             )}
-                            <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+
+                            {msg.type === "audio" && msg.media_url ? (
+                              <AudioPlayer src={msg.media_url} isMe={isMe} />
+                            ) : (
+                              <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                            )}
 
                             <div className={`flex items-center gap-1.5 mt-1 text-[10px] ${isMe ? "text-indigo-200 justify-end" : "text-slate-400"}`}>
                               <span>{formatTime(msg.created_at)}</span>
@@ -907,44 +1039,101 @@ export default function App() {
                     className="hidden" 
                   />
 
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Adjuntar Imagen (Supabase Storage)"
-                    className="p-2.5 text-slate-400 hover:text-indigo-400 bg-slate-800 rounded-xl transition-colors shrink-0"
-                  >
-                    <ImageIcon className="w-5 h-5" />
-                  </button>
+                  {isRecording ? (
+                    <div className="flex-1 flex items-center justify-between bg-slate-950 border border-rose-500/40 rounded-xl px-3 py-2 animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
+                        <span className="text-xs font-mono font-bold text-rose-400">
+                          {formatTimer(recordingTime)}
+                        </span>
+                        <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+                          Grabando nota de voz...
+                        </span>
+                      </div>
 
-                  {/* Selector de Autodestrucción de Mensaje */}
-                  <select
-                    value={selectedTTLSeconds}
-                    onChange={(e) => setSelectedTTLSeconds(Number(e.target.value))}
-                    className="bg-slate-800 border border-slate-700 text-xs text-slate-300 px-2 py-2.5 rounded-xl outline-none"
-                    title="Tiempo de autodestrucción del mensaje"
-                  >
-                    <option value={0}>Sin autodestrucción</option>
-                    <option value={10}>Autodestrucción 10s</option>
-                    <option value={60}>Autodestrucción 1m</option>
-                    <option value={300}>Autodestrucción 5m</option>
-                    <option value={3600}>Autodestrucción 1h</option>
-                  </select>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={cancelRecording}
+                          disabled={isUploadingVoice}
+                          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg flex items-center gap-1 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Cancelar</span>
+                        </button>
 
-                  <input 
-                    type="text"
-                    placeholder="Escribe un mensaje seguro..."
-                    value={messageText}
-                    onChange={(e) => setMessageText(e.target.value)}
-                    className="flex-1 bg-slate-950 border border-slate-800 text-slate-100 text-xs rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 transition-colors"
-                  />
+                        <button
+                          type="button"
+                          onClick={stopAndSendRecording}
+                          disabled={isUploadingVoice}
+                          className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-md shadow-rose-950 transition-colors"
+                        >
+                          {isUploadingVoice ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Subiendo...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Send className="w-3.5 h-3.5" />
+                              <span>Enviar Audio</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        title="Adjuntar Imagen (Supabase Storage)"
+                        className="p-2.5 text-slate-400 hover:text-indigo-400 bg-slate-800 rounded-xl transition-colors shrink-0"
+                      >
+                        <ImageIcon className="w-5 h-5" />
+                      </button>
 
-                  <button
-                    type="submit"
-                    disabled={!messageText.trim() && !selectedImageFile}
-                    className="p-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl transition-colors shadow-md shadow-indigo-950 shrink-0"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
+                      {/* Selector de Autodestrucción de Mensaje */}
+                      <select
+                        value={selectedTTLSeconds}
+                        onChange={(e) => setSelectedTTLSeconds(Number(e.target.value))}
+                        className="bg-slate-800 border border-slate-700 text-xs text-slate-300 px-2 py-2.5 rounded-xl outline-none"
+                        title="Tiempo de autodestrucción del mensaje"
+                      >
+                        <option value={0}>Sin autodestrucción</option>
+                        <option value={10}>Autodestrucción 10s</option>
+                        <option value={60}>Autodestrucción 1m</option>
+                        <option value={300}>Autodestrucción 5m</option>
+                        <option value={3600}>Autodestrucción 1h</option>
+                      </select>
+
+                      <input 
+                        type="text"
+                        placeholder="Escribe un mensaje seguro..."
+                        value={messageText}
+                        onChange={(e) => setMessageText(e.target.value)}
+                        className="flex-1 bg-slate-950 border border-slate-800 text-slate-100 text-xs rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 transition-colors"
+                      />
+
+                      {/* Botón de Grabación de Nota de Voz */}
+                      <button
+                        type="button"
+                        onClick={startRecording}
+                        title="Grabar nota de voz (Autodestrucción 5h)"
+                        className="p-2.5 bg-slate-800 hover:bg-slate-700 text-indigo-400 rounded-xl transition-colors shrink-0 border border-slate-700/60"
+                      >
+                        <Mic className="w-5 h-5" />
+                      </button>
+
+                      <button
+                        type="submit"
+                        disabled={!messageText.trim() && !selectedImageFile}
+                        className="p-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl transition-colors shadow-md shadow-indigo-950 shrink-0"
+                      >
+                        <Send className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
                 </form>
               </>
             ) : (
@@ -1168,6 +1357,17 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* MODAL DE EDITAR PERFIL */}
+      {showProfileModal && (
+        <ProfileModal
+          userProfile={userProfile}
+          onClose={() => setShowProfileModal(false)}
+          onProfileUpdated={(updatedProfile) => {
+            setUserProfile(updatedProfile);
+          }}
+        />
+      )}
 
     </div>
   );
