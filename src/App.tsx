@@ -34,6 +34,7 @@ import {
   UserPlus,
   LogIn,
   Check,
+  CheckCheck,
   Copy,
   Database,
   RefreshCw,
@@ -65,6 +66,7 @@ import {
   uploadImageToStorage, 
   uploadAudioToStorage,
   getConversationMessages, 
+  markMessagesAsRead,
   subscribeToMessages,
   updateSupabaseCredentials,
   supabaseUrl,
@@ -140,6 +142,7 @@ export default function App() {
   // Chat Activo
   const [activeChat, setActiveChat] = useState<any>(null);
   const [messages, setMessages] = useState<SupabaseMessage[]>([]);
+  const [profilesCache, setProfilesCache] = useState<Record<string, { display_name?: string; username?: string; avatar_url?: string }>>({});
   const [messageText, setMessageText] = useState<string>("");
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
@@ -312,7 +315,7 @@ export default function App() {
       const interval = setInterval(reloadConversations, 10000); // Refrescar lista de chats
       return () => clearInterval(interval);
     }
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   // 4. Cargar Mensajes y Suscribirse en Tiempo Real al Chat Activo
   useEffect(() => {
@@ -324,13 +327,62 @@ export default function App() {
       const msgs = await getConversationMessages(activeChat.id);
       setMessages(msgs);
 
-      // Suscripción Realtime de Supabase
-      unsubscribe = subscribeToMessages(activeChat.id, (newMsg) => {
-        setMessages(prev => {
-          if (prev.some(m => m.id === newMsg.id)) return prev;
-          return [...prev, newMsg];
-        });
+      if (currentUser?.id) {
+        await markMessagesAsRead(activeChat.id, currentUser.id);
+      }
+
+      // Guardar en caché los perfiles de sender que vengan en la consulta
+      const newCache: Record<string, any> = {};
+      msgs.forEach((m) => {
+        if (m.sender_id && m.sender) {
+          newCache[m.sender_id] = m.sender;
+        }
       });
+      if (Object.keys(newCache).length > 0) {
+        setProfilesCache((prev) => ({ ...prev, ...newCache }));
+      }
+
+      // Cargar bajo demanda perfiles de sender faltantes
+      const fetchedIds = new Set<string>();
+      msgs.forEach((m) => {
+        if (m.sender_id && !m.sender && !profilesCache[m.sender_id] && !newCache[m.sender_id] && !fetchedIds.has(m.sender_id)) {
+          fetchedIds.add(m.sender_id);
+          getProfile(m.sender_id).then((prof) => {
+            if (prof) {
+              setProfilesCache((prev) => ({ ...prev, [m.sender_id]: prof }));
+            }
+          });
+        }
+      });
+
+      // Suscripción Realtime de Supabase (nuevos mensajes y actualizaciones)
+      unsubscribe = subscribeToMessages(
+        activeChat.id, 
+        async (newMsg) => {
+          if (currentUser?.id && newMsg.sender_id !== currentUser.id) {
+            await markMessagesAsRead(activeChat.id, currentUser.id);
+          }
+
+          // Cargar perfil si falta
+          if (newMsg.sender_id && !newMsg.sender && !profilesCache[newMsg.sender_id]) {
+            getProfile(newMsg.sender_id).then((prof) => {
+              if (prof) {
+                setProfilesCache((prev) => ({ ...prev, [newMsg.sender_id]: prof }));
+              }
+            });
+          }
+
+          setMessages(prev => {
+            if (prev.some(m => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+        },
+        (updatedMsg) => {
+          setMessages(prev => 
+            prev.map(m => m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m)
+          );
+        }
+      );
     };
 
     loadAndSubscribe();
@@ -338,7 +390,7 @@ export default function App() {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [activeChat?.id]);
+  }, [activeChat?.id, currentUser?.id]);
 
   // 5. Scroll Automático al Fondo
   useEffect(() => {
@@ -350,13 +402,17 @@ export default function App() {
   // 6. Temporizador para Limpieza Visibles de Mensajes Expirados
   useEffect(() => {
     const interval = setInterval(() => {
-      if (messages.length > 0) {
+      setMessages((prev) => {
+        if (!prev || prev.length === 0) return prev;
         const now = new Date();
-        setMessages(prev => prev.filter(m => !m.expires_at || new Date(m.expires_at) > now));
-      }
+        const valid = prev.filter((m) => !m.expires_at || new Date(m.expires_at) > now);
+        if (valid.length === prev.length) return prev;
+        return valid;
+      });
     }, 2000);
+
     return () => clearInterval(interval);
-  }, [messages]);
+  }, []);
 
   // --- MÉTODOS DE CREDENCIALES Y AUTENTICACIÓN SUPABASE ---
 
@@ -972,8 +1028,28 @@ export default function App() {
                   ) : (
                     messages.map((msg) => {
                       const isMe = msg.sender_id === currentUser?.id;
+
+                      // Obtener datos del remitente
+                      const senderProfile = msg.sender || profilesCache[msg.sender_id] || (activeChat?.otherUser?.id === msg.sender_id ? activeChat.otherUser : null);
+                      const senderDisplayName = senderProfile?.display_name || (senderProfile?.username ? `@${senderProfile.username}` : "Usuario");
+                      const senderAvatar = senderProfile?.avatar_url || generateInitialsAvatar(senderDisplayName);
+
                       return (
                         <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
+                          {/* Identificación del Remitente para mensajes recibidos en chats y grupos */}
+                          {!isMe && (
+                            <div className="flex items-center gap-1.5 mb-1 ml-1 text-slate-300">
+                              <img 
+                                src={senderAvatar} 
+                                alt={senderDisplayName} 
+                                className="w-4 h-4 rounded-full object-cover border border-slate-700/80 shadow-sm"
+                              />
+                              <span className="text-[11px] font-semibold text-indigo-300/90 tracking-wide">
+                                {senderDisplayName}
+                              </span>
+                            </div>
+                          )}
+
                           <div className={`max-w-[85%] md:max-w-[70%] p-3 rounded-2xl text-sm ${
                             isMe 
                               ? "bg-indigo-600 text-white rounded-br-none shadow-md shadow-indigo-950/40" 
@@ -994,10 +1070,25 @@ export default function App() {
                               <p className="whitespace-pre-wrap break-words">{msg.content}</p>
                             )}
 
+                            {/* Pie del mensaje: Hora, indicador de lectura, etiqueta temporal */}
                             <div className={`flex items-center gap-1.5 mt-1 text-[10px] ${isMe ? "text-indigo-200 justify-end" : "text-slate-400"}`}>
                               <span>{formatTime(msg.created_at)}</span>
+
+                              {/* Indicador de estado de lectura para mensajes propios */}
+                              {isMe && (
+                                <span className="inline-flex items-center ml-0.5" title={msg.is_read || msg.status === "read" ? "Leído" : msg.status === "delivered" ? "Entregado" : "Enviado"}>
+                                  {msg.is_read || msg.status === "read" ? (
+                                    <CheckCheck className="w-3.5 h-3.5 text-sky-300 stroke-[2.5]" />
+                                  ) : msg.status === "delivered" ? (
+                                    <CheckCheck className="w-3.5 h-3.5 text-indigo-200/70" />
+                                  ) : (
+                                    <Check className="w-3.5 h-3.5 text-indigo-200/70" />
+                                  )}
+                                </span>
+                              )}
+
                               {msg.expires_at && (
-                                <span className="bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded text-[9px] font-mono flex items-center gap-0.5">
+                                <span className="bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded text-[9px] font-mono flex items-center gap-0.5 ml-1">
                                   <Clock className="w-2.5 h-2.5" /> Temporal
                                 </span>
                               )}

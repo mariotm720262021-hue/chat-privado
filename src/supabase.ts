@@ -80,6 +80,15 @@ export interface SupabaseMessage {
   created_at: string;
   expires_at?: string; // Para mensajes temporales con autodestrucción
   is_burned?: boolean;
+  is_read?: boolean;
+  status?: "sent" | "delivered" | "read";
+  sender?: {
+    id?: string;
+    username?: string;
+    display_name?: string;
+    avatar_url?: string;
+    status_message?: string;
+  };
 }
 
 /**
@@ -595,6 +604,8 @@ export async function sendMessage(
       media_url: mediaUrl || null,
       expires_at: expiresAt,
       is_burned: false,
+      is_read: false,
+      status: "sent"
     })
     .select()
     .single();
@@ -610,7 +621,7 @@ export async function uploadImageToStorage(file: File, userId: string): Promise<
   const fileExt = file.name.split(".").pop();
   const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
-  const { data, error } = await supabase.storage
+  const { error } = await supabase.storage
     .from("chat-attachments")
     .upload(fileName, file, {
       cacheControl: "3600",
@@ -630,24 +641,52 @@ export async function uploadImageToStorage(file: File, userId: string): Promise<
 
 /**
  * Carga mensajes de una conversación, filtrando solo los creados en las últimas 5 horas y descartando los quemados o expirados.
- * WHERE created_at >= NOW() - INTERVAL '5 hours'
+ * Incluye la relación con profiles (sender_id).
  */
 export async function getConversationMessages(conversationId: string): Promise<SupabaseMessage[]> {
   const fiveHoursAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
 
+  let messagesData: any[] = [];
+
+  // Intenta consulta con JOIN de profiles
   const { data, error } = await supabase
     .from("messages")
-    .select("*")
+    .select("*, sender:profiles!sender_id(id, username, display_name, avatar_url, status_message)")
     .eq("conversation_id", conversationId)
     .gte("created_at", fiveHoursAgo)
     .order("created_at", { ascending: true });
 
-  if (error) return [];
+  if (error) {
+    // Si la sintaxis relacional directa falla, probar sin alias
+    const { data: fallbackData } = await supabase
+      .from("messages")
+      .select("*, profiles(id, username, display_name, avatar_url, status_message)")
+      .eq("conversation_id", conversationId)
+      .gte("created_at", fiveHoursAgo)
+      .order("created_at", { ascending: true });
+
+    if (fallbackData) {
+      messagesData = fallbackData.map((m: any) => ({
+        ...m,
+        sender: m.profiles || m.sender
+      }));
+    } else {
+      const { data: simpleData } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("conversation_id", conversationId)
+        .gte("created_at", fiveHoursAgo)
+        .order("created_at", { ascending: true });
+      messagesData = simpleData || [];
+    }
+  } else {
+    messagesData = data || [];
+  }
 
   const now = new Date();
 
   // Filtrar o marcar mensajes que han expirado
-  return (data || []).filter((msg) => {
+  return messagesData.filter((msg: any) => {
     if (msg.is_burned) return false;
     if (msg.expires_at && new Date(msg.expires_at) < now) return false;
     return true;
@@ -655,9 +694,30 @@ export async function getConversationMessages(conversationId: string): Promise<S
 }
 
 /**
- * Suscribe en tiempo real a los mensajes de una conversación.
+ * Marca como leídos los mensajes de una conversación dirigidos al usuario actual.
  */
-export function subscribeToMessages(conversationId: string, onNewMessage: (msg: SupabaseMessage) => void) {
+export async function markMessagesAsRead(conversationId: string, currentUserId: string): Promise<void> {
+  if (!conversationId || !currentUserId) return;
+  try {
+    await supabase
+      .from("messages")
+      .update({ is_read: true, status: "read" })
+      .eq("conversation_id", conversationId)
+      .neq("sender_id", currentUserId)
+      .eq("is_read", false);
+  } catch (err) {
+    console.warn("Aviso al marcar mensajes como leídos:", err);
+  }
+}
+
+/**
+ * Suscribe en tiempo real a los mensajes de una conversación (nuevos mensajes y actualizaciones de estado).
+ */
+export function subscribeToMessages(
+  conversationId: string, 
+  onNewMessage: (msg: SupabaseMessage) => void,
+  onUpdateMessage?: (msg: SupabaseMessage) => void
+) {
   const channel = supabase
     .channel(`messages_conv_${conversationId}`)
     .on(
@@ -670,6 +730,20 @@ export function subscribeToMessages(conversationId: string, onNewMessage: (msg: 
       },
       (payload) => {
         onNewMessage(payload.new as SupabaseMessage);
+      }
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "messages",
+        filter: `conversation_id=eq.${conversationId}`,
+      },
+      (payload) => {
+        if (onUpdateMessage) {
+          onUpdateMessage(payload.new as SupabaseMessage);
+        }
       }
     )
     .subscribe();

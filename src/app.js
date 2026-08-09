@@ -69,24 +69,18 @@ export function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0
 }
 
 /**
- * Formatea una fecha o Timestamp de Firebase a formato legible "HH:MM" o "DD/MM HH:MM".
+ * Formatea una fecha o Timestamp a formato de 12 horas "HH:MM AM/PM" (ej. "03:45 PM").
  */
 export function formatTime(timestamp) {
   if (!timestamp) return "";
   const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds ? timestamp.seconds * 1000 : timestamp);
-  const now = new Date();
+  if (isNaN(date.getTime())) return "";
   
-  const isToday = date.toDateString() === now.toDateString();
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  
-  if (isToday) {
-    return `${hours}:${minutes}`;
-  } else {
-    const day = date.getDate().toString().padStart(2, "0");
-    const month = (date.getMonth() + 1).toString().padStart(2, "0");
-    return `${day}/${month} ${hours}:${minutes}`;
-  }
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true
+  });
 }
 
 /**

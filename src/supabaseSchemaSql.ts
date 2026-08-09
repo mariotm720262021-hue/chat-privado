@@ -81,12 +81,16 @@ CREATE TABLE IF NOT EXISTS public.messages (
   media_url TEXT,
   expires_at TIMESTAMPTZ,
   is_burned BOOLEAN DEFAULT false,
+  is_read BOOLEAN DEFAULT false,
+  status TEXT DEFAULT 'sent',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Asegurar tipo de mensaje 'audio' en instalaciones existentes
+-- Asegurar tipo de mensaje 'audio' y columnas de lectura en instalaciones existentes
 ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_type_check;
 ALTER TABLE public.messages ADD CONSTRAINT messages_type_check CHECK (type IN ('text', 'image', 'audio'));
+ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT false;
+ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent';
 
 -- Index para ordenamiento y consultas por conversación
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON public.messages(conversation_id, created_at);
