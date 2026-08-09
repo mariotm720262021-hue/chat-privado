@@ -1,7 +1,18 @@
 import { createClient } from "@supabase/supabase-js";
 
 // Credenciales iniciales
-const getSavedUrl = () => localStorage.getItem("custom_supabase_url") || import.meta.env.VITE_SUPABASE_URL || "https://xyzcompany.supabase.co";
+const DEFAULT_SUPABASE_URL = "https://wscmqhypdbviusfamwig.supabase.co";
+
+const getSavedUrl = () => {
+  const saved = localStorage.getItem("custom_supabase_url");
+  if (!saved || saved === "https://xyzcompany.supabase.co") {
+    return import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_URL !== "https://xyzcompany.supabase.co" 
+      ? import.meta.env.VITE_SUPABASE_URL 
+      : DEFAULT_SUPABASE_URL;
+  }
+  return saved;
+};
+
 const getSavedKey = () => localStorage.getItem("custom_supabase_key") || import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_5NAjwhDe-jVi6NyDVJoqcw_cao0ikQJ";
 
 export let supabaseUrl = getSavedUrl();
