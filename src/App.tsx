@@ -87,7 +87,7 @@ import {
 import { AudioPlayer } from "./components/AudioPlayer";
 import { ProfileModal } from "./components/ProfileModal";
 import chatWallpaper from "./assets/images/chat_bg_wallpaper.jpg";
-import sidebarWallpaper from "./assets/images/sidebar_wallpaper.jpg";
+import sidebarWallpaper from "./assets/images/space_teal_doodle.jpg";
 
 export default function App() {
   // Estado de Supabase Connection
@@ -806,17 +806,16 @@ export default function App() {
           
           {/* BARRA LATERAL / LISTA DE CHATS */}
           <div 
-            className={`${currentView === "chat_room" ? "hidden md:flex" : "flex"} flex-col w-full md:w-80 lg:w-96 bg-slate-900 border-r border-slate-800/80 shrink-0 h-full`}
+            className={`${currentView === "chat_room" ? "hidden md:flex" : "flex"} flex-col w-full md:w-80 lg:w-96 bg-emerald-950 border-r border-slate-800/80 shrink-0 h-full`}
             style={{
-              backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.70), rgba(15, 23, 42, 0.70)), url(${sidebarWallpaper})`,
-              backgroundSize: "360px",
-              backgroundRepeat: "repeat",
-              backgroundPosition: "top left"
+              backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.15), rgba(15, 23, 42, 0.20)), url(${sidebarWallpaper})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center"
             }}
           >
             
             {/* Header Lateral */}
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+            <div className="p-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/60 backdrop-blur-md">
               <button 
                 onClick={() => setShowProfileModal(true)}
                 className="flex items-center gap-3 text-left group hover:opacity-90 transition-opacity min-w-0 flex-1 mr-2"
@@ -838,7 +837,7 @@ export default function App() {
                   </h2>
                   <p className="text-[11px] text-indigo-400 font-mono truncate">@{userProfile?.username || "usuario"}</p>
                   {userProfile?.status_message && (
-                    <p className="text-[10px] text-slate-400 truncate italic mt-0.5">"{userProfile.status_message}"</p>
+                    <p className="text-[10px] text-slate-300 truncate italic mt-0.5">"{userProfile.status_message}"</p>
                   )}
                 </div>
               </button>
@@ -847,21 +846,21 @@ export default function App() {
                 <button
                   onClick={() => setShowSqlModal(true)}
                   title="Configurar Supabase / SQL"
-                  className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors"
+                  className="p-2 text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 rounded-xl transition-colors backdrop-blur-sm"
                 >
                   <Database className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
                   title="Crear / Unirse a Grupo"
-                  className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors"
+                  className="p-2 text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 rounded-xl transition-colors backdrop-blur-sm"
                 >
                   <Users className="w-4 h-4" />
                 </button>
                 <button
                   onClick={handleLogout}
                   title="Cerrar Sesión"
-                  className="p-2 text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl transition-colors"
+                  className="p-2 text-rose-400 hover:text-rose-300 bg-rose-500/20 hover:bg-rose-500/30 rounded-xl transition-colors backdrop-blur-sm"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -869,15 +868,15 @@ export default function App() {
             </div>
 
             {/* Buscador de Usuarios en Supabase */}
-            <div className="p-3 border-b border-slate-800/80">
+            <div className="p-3 border-b border-slate-800/80 bg-slate-900/40 backdrop-blur-md">
               <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                <Search className="w-4 h-4 absolute left-3 top-3 text-slate-300" />
                 <input 
                   type="text"
                   placeholder="Buscar por @usuario o nombre..."
                   value={searchQuery}
                   onChange={(e) => handleSearch(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 text-xs text-slate-200 pl-9 pr-4 py-2.5 rounded-xl outline-none focus:border-indigo-500 transition-colors"
+                  className="w-full bg-slate-950/70 border border-slate-700/60 text-xs text-white placeholder-slate-300 pl-9 pr-4 py-2.5 rounded-xl outline-none focus:border-indigo-400 transition-colors backdrop-blur-sm"
                 />
               </div>
 
@@ -885,14 +884,14 @@ export default function App() {
               <div className="mt-2.5 flex gap-2">
                 <button
                   onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
-                  className="flex-1 py-1.5 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 rounded-xl text-xs font-medium text-indigo-300 flex items-center justify-center gap-1.5 transition-colors"
+                  className="flex-1 py-1.5 px-3 bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors shadow-sm backdrop-blur-sm"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Crear Grupo</span>
                 </button>
                 <button
                   onClick={() => { setGroupModalMode("join"); setShowGroupModal(true); }}
-                  className="flex-1 py-1.5 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-xl text-xs font-medium text-slate-300 flex items-center justify-center gap-1.5 transition-colors"
+                  className="flex-1 py-1.5 px-3 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-700/70 rounded-xl text-xs font-medium text-slate-100 flex items-center justify-center gap-1.5 transition-colors backdrop-blur-sm"
                 >
                   <QrCode className="w-3.5 h-3.5" />
                   <span>Código de Grupo</span>
@@ -953,8 +952,8 @@ export default function App() {
                             setActiveChat(chat);
                             setCurrentView("chat_room");
                           }}
-                          className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left ${
-                            activeChat?.id === chat.id ? "bg-indigo-600/20 border border-indigo-500/30" : "hover:bg-slate-800/60"
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left backdrop-blur-sm ${
+                            activeChat?.id === chat.id ? "bg-indigo-600/30 border border-indigo-400/40 shadow-sm" : "bg-slate-900/30 hover:bg-slate-800/50 border border-slate-800/40"
                           }`}
                         >
                           <img src={avatar} alt="" className="w-11 h-11 rounded-full object-cover shrink-0" />
