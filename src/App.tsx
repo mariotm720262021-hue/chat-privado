@@ -87,6 +87,7 @@ import {
 import { AudioPlayer } from "./components/AudioPlayer";
 import { ProfileModal } from "./components/ProfileModal";
 import chatWallpaper from "./assets/images/chat_bg_wallpaper.jpg";
+import sidebarWallpaper from "./assets/images/sidebar_wallpaper.jpg";
 
 export default function App() {
   // Estado de Supabase Connection
@@ -804,7 +805,15 @@ export default function App() {
         <div className="flex-1 flex flex-col md:flex-row h-full overflow-hidden">
           
           {/* BARRA LATERAL / LISTA DE CHATS */}
-          <div className={`${currentView === "chat_room" ? "hidden md:flex" : "flex"} flex-col w-full md:w-80 lg:w-96 bg-slate-900 border-r border-slate-800/80 shrink-0 h-full`}>
+          <div 
+            className={`${currentView === "chat_room" ? "hidden md:flex" : "flex"} flex-col w-full md:w-80 lg:w-96 bg-slate-900 border-r border-slate-800/80 shrink-0 h-full`}
+            style={{
+              backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.70), rgba(15, 23, 42, 0.70)), url(${sidebarWallpaper})`,
+              backgroundSize: "360px",
+              backgroundRepeat: "repeat",
+              backgroundPosition: "top left"
+            }}
+          >
             
             {/* Header Lateral */}
             <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
