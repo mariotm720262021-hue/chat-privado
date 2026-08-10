@@ -49,6 +49,24 @@ export function updateSupabaseCredentials(newUrl: string, newKey: string) {
   });
 }
 
+export function resetSupabaseCredentials() {
+  localStorage.removeItem("custom_supabase_url");
+  localStorage.removeItem("custom_supabase_key");
+
+  supabaseUrl = getSavedUrl();
+  supabaseKey = getSavedKey();
+
+  supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  return { supabaseUrl, supabaseKey };
+}
+
 export interface SupabaseProfile {
   id: string;
   username: string;

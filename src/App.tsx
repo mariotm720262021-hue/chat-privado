@@ -69,6 +69,7 @@ import {
   markMessagesAsRead,
   subscribeToMessages,
   updateSupabaseCredentials,
+  resetSupabaseCredentials,
   supabaseUrl,
   supabaseKey,
   SupabaseProfile,
@@ -440,6 +441,19 @@ export default function App() {
       await verifyConnection();
     } catch (err: any) {
       alert(err.message || "Error al actualizar las credenciales de Supabase.");
+    }
+  };
+
+  const handleResetCredentials = async () => {
+    setCredSaveSuccess("");
+    try {
+      const defaults = resetSupabaseCredentials();
+      setCustomUrlInput(defaults.supabaseUrl);
+      setCustomKeyInput(defaults.supabaseKey);
+      setCredSaveSuccess("¡Credenciales restablecidas a los valores por defecto!");
+      await verifyConnection();
+    } catch (err: any) {
+      alert(err.message || "Error al restablecer las credenciales.");
     }
   };
 
@@ -843,13 +857,6 @@ export default function App() {
               </button>
 
               <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setShowSqlModal(true)}
-                  title="Configurar Supabase / SQL"
-                  className="p-2 text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 rounded-xl transition-colors backdrop-blur-sm"
-                >
-                  <Database className="w-4 h-4" />
-                </button>
                 <button
                   onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
                   title="Crear / Unirse a Grupo"
@@ -1410,12 +1417,21 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="flex justify-end pt-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleResetCredentials}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 border border-slate-700/60"
+                      title="Restablecer y eliminar credenciales personalizadas guardadas"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Restablecer por Defecto</span>
+                    </button>
                     <button
                       type="submit"
-                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg transition-colors flex items-center gap-1.5"
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-lg transition-colors flex items-center gap-1.5 shadow-sm"
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
+                      <Check className="w-3.5 h-3.5" />
                       <span>Guardar y Probar Conexión</span>
                     </button>
                   </div>
