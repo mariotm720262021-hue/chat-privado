@@ -329,6 +329,13 @@ export default function App() {
 
       if (currentUser?.id) {
         await markMessagesAsRead(activeChat.id, currentUser.id);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.sender_id !== currentUser.id
+              ? { ...m, is_read: true, status: "read" }
+              : m
+          )
+        );
       }
 
       // Guardar en caché los perfiles de sender que vengan en la consulta
@@ -358,28 +365,34 @@ export default function App() {
       // Suscripción Realtime de Supabase (nuevos mensajes y actualizaciones)
       unsubscribe = subscribeToMessages(
         activeChat.id, 
-        async (newMsg) => {
-          if (currentUser?.id && newMsg.sender_id !== currentUser.id) {
+        async (incomingMsg) => {
+          let msgToAdd = incomingMsg;
+          if (currentUser?.id && incomingMsg.sender_id !== currentUser.id) {
             await markMessagesAsRead(activeChat.id, currentUser.id);
+            msgToAdd = { ...incomingMsg, is_read: true, status: "read" };
           }
 
           // Cargar perfil si falta
-          if (newMsg.sender_id && !newMsg.sender && !profilesCache[newMsg.sender_id]) {
-            getProfile(newMsg.sender_id).then((prof) => {
+          if (msgToAdd.sender_id && !msgToAdd.sender && !profilesCache[msgToAdd.sender_id]) {
+            getProfile(msgToAdd.sender_id).then((prof) => {
               if (prof) {
-                setProfilesCache((prev) => ({ ...prev, [newMsg.sender_id]: prof }));
+                setProfilesCache((prev) => ({ ...prev, [msgToAdd.sender_id]: prof }));
               }
             });
           }
 
           setMessages(prev => {
-            if (prev.some(m => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
+            if (prev.some(m => m.id === msgToAdd.id)) return prev;
+            return [...prev, msgToAdd];
           });
         },
         (updatedMsg) => {
           setMessages(prev => 
-            prev.map(m => m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m)
+            prev.map(m => m.id === updatedMsg.id ? { 
+              ...m, 
+              ...updatedMsg,
+              sender: m.sender || (updatedMsg as any).sender || (m.sender_id ? profilesCache[m.sender_id] : undefined)
+            } : m)
           );
         }
       );
