@@ -86,6 +86,7 @@ import {
 
 import { AudioPlayer } from "./components/AudioPlayer";
 import { ProfileModal } from "./components/ProfileModal";
+import chatWallpaper from "./assets/images/chat_bg_wallpaper.jpg";
 
 export default function App() {
   // Estado de Supabase Connection
@@ -1025,7 +1026,15 @@ export default function App() {
                 </div>
 
                 {/* Área de Mensajes */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+                <div 
+                  className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-slate-950"
+                  style={{
+                    backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.40), rgba(15, 23, 42, 0.40)), url(${chatWallpaper})`,
+                    backgroundSize: "380px",
+                    backgroundRepeat: "repeat",
+                    backgroundPosition: "top left"
+                  }}
+                >
                   <div className="text-center my-2">
                     <span className="text-[10px] bg-slate-900 border border-slate-800 text-slate-400 px-3 py-1 rounded-full inline-flex items-center gap-1.5">
                       <Lock className="w-3 h-3 text-emerald-400" />
