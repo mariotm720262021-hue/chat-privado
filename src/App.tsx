@@ -1029,10 +1029,10 @@ export default function App() {
                 <div 
                   className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-slate-950"
                   style={{
-                    backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.40), rgba(15, 23, 42, 0.40)), url(${chatWallpaper})`,
-                    backgroundSize: "380px",
+                    backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.35), rgba(15, 23, 42, 0.35)), url(${chatWallpaper})`,
+                    backgroundSize: "420px",
                     backgroundRepeat: "repeat",
-                    backgroundPosition: "top left"
+                    backgroundPosition: "center"
                   }}
                 >
                   <div className="text-center my-2">
