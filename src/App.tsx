@@ -677,19 +677,9 @@ export default function App() {
 
             {/* Mensajes de Error */}
             {authError && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs space-y-2">
-                <div className="flex items-center gap-2 font-medium text-rose-400">
-                  <Info className="w-4 h-4 shrink-0" />
-                  <span>{authError}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowSqlModal(true)}
-                  className="w-full py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 rounded-lg transition-colors text-[11px] font-medium flex items-center justify-center gap-1.5"
-                >
-                  <Database className="w-3.5 h-3.5" />
-                  <span>Configurar URL / Keys / Script SQL de Supabase</span>
-                </button>
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2 font-medium text-rose-400">
+                <Info className="w-4 h-4 shrink-0" />
+                <span>{authError}</span>
               </div>
             )}
 
