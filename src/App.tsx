@@ -788,17 +788,6 @@ export default function App() {
                     : "¿Nuevo usuario? Crear cuenta con Supabase"}
                 </button>
               </div>
-
-              <div className="text-center pt-3 border-t border-slate-800/80 mt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowSqlModal(true)}
-                  className="text-[11px] text-slate-500 hover:text-slate-400 font-medium inline-flex items-center gap-1.5 transition-colors"
-                >
-                  <Database className="w-3 h-3" />
-                  <span>Configuración de Supabase / SQL</span>
-                </button>
-              </div>
             </form>
           </motion.div>
         </div>
