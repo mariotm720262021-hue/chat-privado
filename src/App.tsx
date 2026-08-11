@@ -45,7 +45,8 @@ import {
   Square,
   Smile,
   Edit3,
-  Loader2
+  Loader2,
+  Phone
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -54,6 +55,9 @@ import {
   checkSupabaseConnection, 
   registerWithEmail, 
   loginWithEmail, 
+  loginWithOAuth,
+  sendWhatsAppOtp,
+  verifyWhatsAppOtp,
   logoutUser, 
   getProfile, 
   ensureProfileExists,
@@ -84,6 +88,28 @@ import {
   formatTime, 
   generateInitialsAvatar 
 } from "./app";
+
+// --- COMPONENTES DE ÍCONOS SOCIALES ---
+const GoogleIcon = () => (
+  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+  </svg>
+);
+
+const FacebookIcon = () => (
+  <svg className="w-4 h-4 shrink-0 fill-current text-[#1877F2]" viewBox="0 0 24 24">
+    <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+  </svg>
+);
+
+const WhatsAppIcon = () => (
+  <svg className="w-4 h-4 shrink-0 fill-current text-[#25D366]" viewBox="0 0 24 24">
+    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.099 3.648 3.742-.981zm11.387-5.464c-.285-.143-1.689-.833-1.95-.928-.261-.095-.451-.143-.642.143-.19.285-.736.928-.902 1.118-.166.19-.333.214-.618.071-.285-.143-1.205-.444-2.296-1.416-.848-.756-1.421-1.69-1.587-1.975-.166-.285-.018-.439.125-.581.128-.127.285-.333.428-.499.143-.166.19-.285.285-.475.095-.19.048-.356-.024-.499-.071-.143-.642-1.545-.88-2.115-.232-.556-.468-.48-.642-.489-.166-.008-.356-.01-.546-.01-.19 0-.499.071-.76.356-.261.285-.999.975-.999 2.378 0 1.403 1.022 2.758 1.165 2.948.143.19 2.012 3.073 4.875 4.311.681.294 1.213.47 1.627.601.684.217 1.307.186 1.8.113.55-.082 1.689-.69 1.927-1.356.238-.665.238-1.236.166-1.356-.071-.119-.261-.19-.546-.333z"/>
+  </svg>
+);
 
 import { AudioPlayer } from "./components/AudioPlayer";
 import { ProfileModal } from "./components/ProfileModal";
@@ -120,10 +146,14 @@ export default function App() {
   const [currentView, setCurrentView] = useState<string>("auth");
 
   // Estado de Formulario de Autenticación
+  const [authMethod, setAuthMethod] = useState<"email" | "whatsapp">("email");
   const [emailInput, setEmailInput] = useState<string>("");
   const [passwordInput, setPasswordInput] = useState<string>("");
   const [usernameInput, setUsernameInput] = useState<string>("");
   const [displayNameInput, setDisplayNameInput] = useState<string>("");
+  const [phoneInput, setPhoneInput] = useState<string>("");
+  const [otpInput, setOtpInput] = useState<string>("");
+  const [otpSent, setOtpSent] = useState<boolean>(false);
   const [isRegisterMode, setIsRegisterMode] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>("");
   const [authLoading, setAuthLoading] = useState<boolean>(false);
@@ -500,6 +530,54 @@ export default function App() {
     }
   };
 
+  const handleOAuthLogin = async (provider: "google" | "facebook") => {
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      await loginWithOAuth(provider);
+    } catch (err: any) {
+      console.error(err);
+      setAuthError(err.message || `Error al conectar con ${provider}. Asegúrate de habilitar el proveedor en Supabase Auth.`);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSendWhatsAppOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      if (!phoneInput.trim() || !phoneInput.startsWith("+")) {
+        throw new Error("Ingresa tu número de WhatsApp con código de país (ejemplo: +50499887766).");
+      }
+      await sendWhatsAppOtp(phoneInput.trim());
+      setOtpSent(true);
+    } catch (err: any) {
+      console.error(err);
+      setAuthError(err.message || "Error al enviar el código de WhatsApp. Revisa que el número incluya código de país (+).");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleVerifyWhatsAppOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      if (!otpInput.trim() || otpInput.trim().length < 6) {
+        throw new Error("Ingresa el código de 6 dígitos que te enviamos por WhatsApp.");
+      }
+      await verifyWhatsAppOtp(phoneInput.trim(), otpInput.trim());
+    } catch (err: any) {
+      console.error(err);
+      setAuthError(err.message || "Código incorrecto o expirado.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await logoutUser();
@@ -675,6 +753,34 @@ export default function App() {
               </p>
             </div>
 
+            {/* TABS DE MÉTODO DE ACCESO */}
+            <div className="flex bg-slate-800/80 p-1 rounded-xl mb-5 border border-slate-700/60">
+              <button
+                type="button"
+                onClick={() => { setAuthMethod("email"); setAuthError(""); }}
+                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-2 ${
+                  authMethod === "email"
+                    ? "bg-indigo-600 text-white shadow-md"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Mail className="w-3.5 h-3.5" />
+                <span>Correo</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthMethod("whatsapp"); setAuthError(""); setOtpSent(false); }}
+                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-2 ${
+                  authMethod === "whatsapp"
+                    ? "bg-[#25D366] text-slate-950 font-bold shadow-md"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <WhatsAppIcon />
+                <span>WhatsApp</span>
+              </button>
+            </div>
+
             {/* Mensajes de Error */}
             {authError && (
               <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2 font-medium text-rose-400">
@@ -683,112 +789,237 @@ export default function App() {
               </div>
             )}
 
-            {/* FORMULARIO SUPABASE AUTH */}
-            <form onSubmit={handleEmailAuth} className="space-y-4">
-              {isRegisterMode && (
-                <>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Nombre de Usuario Único (@usuario)
-                    </label>
-                    <div className="relative">
-                      <AtSign className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
-                      <input 
-                        type="text"
-                        placeholder="carlos_mendoza"
-                        value={usernameInput}
-                        onChange={(e) => setUsernameInput(e.target.value)}
-                        className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-indigo-500 transition-colors"
-                        required={isRegisterMode}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Nombre Visible
-                    </label>
-                    <div className="relative">
-                      <User className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
-                      <input 
-                        type="text"
-                        placeholder="Carlos Mendoza"
-                        value={displayNameInput}
-                        onChange={(e) => setDisplayNameInput(e.target.value)}
-                        className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-indigo-500 transition-colors"
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Correo Electrónico
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
-                  <input 
-                    type="email"
-                    placeholder="usuario@ejemplo.com"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-indigo-500 transition-colors"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Contraseña
-                </label>
-                <div className="relative">
-                  <Key className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
-                  <input 
-                    type="password"
-                    placeholder="••••••••"
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-indigo-500 transition-colors"
-                    minLength={6}
-                    required
-                  />
-                </div>
-              </div>
-
-              <button 
-                type="submit"
-                disabled={authLoading}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm py-3 rounded-xl transition-all shadow-lg shadow-indigo-900/30 flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
-              >
-                {authLoading ? (
-                  <span className="text-xs">Conectando con Supabase...</span>
-                ) : isRegisterMode ? (
+            {/* FORMULARIO SEGÚN MÉTODO DE ACCESO */}
+            {authMethod === "email" ? (
+              <form onSubmit={handleEmailAuth} className="space-y-4">
+                {isRegisterMode && (
                   <>
-                    <span>Registrarse en Supabase</span>
-                    <UserPlus className="w-4 h-4" />
-                  </>
-                ) : (
-                  <>
-                    <span>Iniciar Sesión</span>
-                    <LogIn className="w-4 h-4" />
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Nombre de Usuario Único (@usuario)
+                      </label>
+                      <div className="relative">
+                        <AtSign className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
+                        <input 
+                          type="text"
+                          placeholder="carlos_mendoza"
+                          value={usernameInput}
+                          onChange={(e) => setUsernameInput(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-indigo-500 transition-colors"
+                          required={isRegisterMode}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Nombre Visible
+                      </label>
+                      <div className="relative">
+                        <User className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
+                        <input 
+                          type="text"
+                          placeholder="Carlos Mendoza"
+                          value={displayNameInput}
+                          onChange={(e) => setDisplayNameInput(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-indigo-500 transition-colors"
+                        />
+                      </div>
+                    </div>
                   </>
                 )}
-              </button>
 
-              <div className="text-center pt-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Correo Electrónico
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
+                    <input 
+                      type="email"
+                      placeholder="usuario@ejemplo.com"
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-indigo-500 transition-colors"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Contraseña
+                  </label>
+                  <div className="relative">
+                    <Key className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
+                    <input 
+                      type="password"
+                      placeholder="••••••••"
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-indigo-500 transition-colors"
+                      minLength={6}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm py-3 rounded-xl transition-all shadow-lg shadow-indigo-900/30 flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
+                >
+                  {authLoading ? (
+                    <span className="text-xs">Conectando con Supabase...</span>
+                  ) : isRegisterMode ? (
+                    <>
+                      <span>Registrarse en Supabase</span>
+                      <UserPlus className="w-4 h-4" />
+                    </>
+                  ) : (
+                    <>
+                      <span>Iniciar Sesión</span>
+                      <LogIn className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+
+                <div className="text-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setIsRegisterMode(!isRegisterMode); setAuthError(""); }}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 underline font-medium"
+                  >
+                    {isRegisterMode 
+                      ? "¿Ya tienes cuenta? Inicia sesión" 
+                      : "¿Nuevo usuario? Crear cuenta con Correo"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* FORMULARIO DE ACCESO POR WHATSAPP */
+              <div className="space-y-4">
+                {!otpSent ? (
+                  <form onSubmit={handleSendWhatsAppOtp} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Número de WhatsApp (con Código de País)
+                      </label>
+                      <div className="relative">
+                        <Phone className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
+                        <input 
+                          type="tel"
+                          placeholder="+50499887766"
+                          value={phoneInput}
+                          onChange={(e) => setPhoneInput(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-emerald-500 transition-colors"
+                          required
+                        />
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Incluye tu código de país (ej. <span className="text-emerald-400 font-medium">+504</span> para Honduras, <span className="text-emerald-400 font-medium">+52</span> para México).
+                      </p>
+                    </div>
+
+                    <button 
+                      type="submit"
+                      disabled={authLoading}
+                      className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-bold text-sm py-3 rounded-xl transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {authLoading ? (
+                        <span className="text-xs text-slate-900">Enviando código...</span>
+                      ) : (
+                        <>
+                          <WhatsAppIcon />
+                          <span>Enviar Código por WhatsApp</span>
+                        </>
+                      )}
+                    </button>
+                  </form>
+                ) : (
+                  <form onSubmit={handleVerifyWhatsAppOtp} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Código de Verificación (OTP)
+                      </label>
+                      <div className="relative">
+                        <Key className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
+                        <input 
+                          type="text"
+                          placeholder="123456"
+                          value={otpInput}
+                          onChange={(e) => setOtpInput(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl pl-9 pr-4 py-3 outline-none focus:border-emerald-500 transition-colors text-center font-mono text-base tracking-widest"
+                          maxLength={6}
+                          required
+                        />
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1 text-center">
+                        Código enviado a <span className="text-emerald-400 font-medium">{phoneInput}</span>
+                      </p>
+                    </div>
+
+                    <button 
+                      type="submit"
+                      disabled={authLoading}
+                      className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-bold text-sm py-3 rounded-xl transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {authLoading ? (
+                        <span className="text-xs text-slate-900">Verificando...</span>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4 text-slate-950" />
+                          <span>Verificar e Iniciar Sesión</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="text-center">
+                      <button
+                        type="button"
+                        onClick={() => { setOtpSent(false); setOtpInput(""); setAuthError(""); }}
+                        className="text-xs text-slate-400 hover:text-slate-200 underline"
+                      >
+                        Cambiar número de teléfono
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
+
+            {/* OPCIONES DE REGISTRO / INGRESO CON GOOGLE Y FACEBOOK */}
+            <div className="mt-6 pt-5 border-t border-slate-800/80">
+              <div className="relative flex py-1 items-center mb-4">
+                <div className="flex-grow border-t border-slate-800"></div>
+                <span className="shrink mx-3 text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  O continúa con
+                </span>
+                <div className="flex-grow border-t border-slate-800"></div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => { setIsRegisterMode(!isRegisterMode); setAuthError(""); }}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 underline font-medium"
+                  onClick={() => handleOAuthLogin("google")}
+                  disabled={authLoading}
+                  className="flex items-center justify-center gap-2 px-3 py-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/80 rounded-xl text-xs font-semibold text-slate-200 transition-all hover:border-slate-600 disabled:opacity-50 shadow-sm"
                 >
-                  {isRegisterMode 
-                    ? "¿Ya tienes cuenta en Supabase? Inicia sesión" 
-                    : "¿Nuevo usuario? Crear cuenta con Supabase"}
+                  <GoogleIcon />
+                  <span>Google</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOAuthLogin("facebook")}
+                  disabled={authLoading}
+                  className="flex items-center justify-center gap-2 px-3 py-2.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700/80 rounded-xl text-xs font-semibold text-slate-200 transition-all hover:border-slate-600 disabled:opacity-50 shadow-sm"
+                >
+                  <FacebookIcon />
+                  <span>Facebook</span>
                 </button>
               </div>
-            </form>
+            </div>
           </motion.div>
         </div>
       )}

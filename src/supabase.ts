@@ -223,6 +223,58 @@ export async function loginWithEmail(email: string, pass: string) {
 }
 
 /**
+ * Inicia sesión / Registro con OAuth (Google, Facebook).
+ */
+export async function loginWithOAuth(provider: "google" | "facebook") {
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo: window.location.origin,
+    },
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Envia código OTP por WhatsApp / Teléfono.
+ */
+export async function sendWhatsAppOtp(phone: string) {
+  const cleanPhone = phone.trim();
+  if (!cleanPhone) throw new Error("Ingresa un número de teléfono con código de país (ej. +50499887766).");
+
+  const { data, error } = await supabase.auth.signInWithOtp({
+    phone: cleanPhone,
+    options: {
+      channel: "whatsapp",
+    },
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Verifica el código OTP de WhatsApp / Teléfono.
+ */
+export async function verifyWhatsAppOtp(phone: string, token: string) {
+  const cleanPhone = phone.trim();
+  const cleanToken = token.trim();
+  if (!cleanPhone || !cleanToken) throw new Error("El número de teléfono y el código son obligatorios.");
+
+  const { data, error } = await supabase.auth.verifyOtp({
+    phone: cleanPhone,
+    token: cleanToken,
+    type: "sms",
+  });
+  if (error) throw error;
+
+  if (data.user) {
+    await ensureProfileExists(data.user.id);
+  }
+  return data;
+}
+
+/**
  * Cierra sesión.
  */
 export async function logoutUser() {
