@@ -534,10 +534,15 @@ export default function App() {
     setAuthError("");
     setAuthLoading(true);
     try {
-      await loginWithOAuth(provider);
+      // Obtenemos la URL actual dinámica de la app en la vista previa web
+      const currentDynamicUrl = window.location.href.split('?')[0].split('#')[0];
+      await loginWithOAuth(provider, currentDynamicUrl);
     } catch (err: any) {
       console.error(err);
-      setAuthError(err.message || `Error al conectar con ${provider}. Asegúrate de habilitar el proveedor en Supabase Auth.`);
+      setAuthError(
+        err.message || 
+        `Error al conectar con ${provider}. Asegúrate de agregar '${window.location.origin}' en Redirect URLs en el panel de Supabase.`
+      );
     } finally {
       setAuthLoading(false);
     }

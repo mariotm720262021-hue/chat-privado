@@ -224,12 +224,24 @@ export async function loginWithEmail(email: string, pass: string) {
 
 /**
  * Inicia sesión / Registro con OAuth (Google, Facebook).
+ * Utiliza dinámicamente la URL real actual del navegador (window.location.origin / href).
  */
-export async function loginWithOAuth(provider: "google" | "facebook") {
+export async function loginWithOAuth(provider: "google" | "facebook", redirectUrl?: string) {
+  // Determina dinámicamente la URL de origen actual en el navegador
+  const currentUrl = typeof window !== "undefined" 
+    ? window.location.href.split('?')[0].split('#')[0]
+    : "";
+
+  const targetRedirect = redirectUrl || currentUrl;
+
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: window.location.origin,
+      redirectTo: targetRedirect,
+      queryParams: provider === "google" ? {
+        access_type: "offline",
+        prompt: "consent",
+      } : undefined,
     },
   });
   if (error) throw error;
