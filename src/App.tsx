@@ -77,6 +77,7 @@ import {
   getConversationMessages, 
   markMessagesAsRead,
   subscribeToMessages,
+  subscribeToAllMessages,
   getPendingFriendRequests,
   getAcceptedFriends,
   updateSupabaseCredentials,
@@ -175,7 +176,30 @@ export default function App() {
   const [pendingRequests, setPendingRequests] = useState<SupabaseFriendship[]>([]);
   const [incomingRequestToast, setIncomingRequestToast] = useState<{ senderName: string; senderUsername: string; avatarUrl?: string; id?: string } | null>(null);
 
+  // Contador de Mensajes No Leídos (Unread) y Banner Flotante de Notificaciones
   const currentUserId = currentUser?.id;
+
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem(`unread_counts_${currentUserId || "guest"}`);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [incomingMessageToast, setIncomingMessageToast] = useState<{
+    id: string;
+    conversationId: string;
+    senderId: string;
+    senderName: string;
+    senderAvatar?: string;
+    senderUsername?: string;
+    text: string;
+    created_at: string;
+  } | null>(null);
+
+  const messageToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Sonido suave de notificación al recibir solicitud
   const playFriendNotificationSound = () => {
@@ -194,6 +218,31 @@ export default function App() {
       osc.stop(ctx.currentTime + 0.4);
     } catch (e) {}
   };
+
+  // Sonido limpio de notificación al recibir un nuevo mensaje de chat
+  const playMessageNotificationSound = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+      osc.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 0.12); // G5
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+    } catch (e) {}
+  };
+
+  // Guardar unreadCounts en localStorage
+  useEffect(() => {
+    if (currentUserId) {
+      localStorage.setItem(`unread_counts_${currentUserId}`, JSON.stringify(unreadCounts));
+    }
+  }, [unreadCounts, currentUserId]);
 
   // Función para cargar solicitudes de amistad recibidas
   const fetchRequests = async () => {
@@ -660,6 +709,132 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Referencias para verificar estado actual dentro de suscripciones en tiempo real
+  const activeChatRef = useRef<any>(activeChat);
+  const currentViewRef = useRef<string>(currentView);
+
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
+
+  useEffect(() => {
+    currentViewRef.current = currentView;
+  }, [currentView]);
+
+  // 7. SUSCRIPCIÓN A MENSAJES (Supabase Realtime) A NIVEL GLOBAL
+  // Escucha los eventos INSERT en la tabla 'messages'
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    const unsubscribe = subscribeToAllMessages(async (incomingMsg) => {
+      // 1. Si el mensaje fue enviado por el usuario actual, ignorar
+      if (incomingMsg.sender_id === currentUserId) return;
+
+      // 2. Comprobar si el usuario está actualmente dentro de esa conversación abierta
+      const isInsideThisChat =
+        activeChatRef.current?.id === incomingMsg.conversation_id &&
+        currentViewRef.current === "chat_room";
+
+      // Si el usuario está dentro del chat abierto, no dispara banner ni incrementa no leídos
+      if (isInsideThisChat) {
+        return;
+      }
+
+      // Disparar sonido de notificación
+      playMessageNotificationSound();
+
+      // Incrementar contador de mensajes no leídos (Unread) para esta conversación
+      setUnreadCounts((prev) => ({
+        ...prev,
+        [incomingMsg.conversation_id]: (prev[incomingMsg.conversation_id] || 0) + 1,
+      }));
+
+      // Resolver nombre del remitente (de cache, amigos, chats o consulta Supabase)
+      let senderName = "Usuario";
+      let senderAvatar: string | undefined = undefined;
+      let senderUsername = "amigo";
+
+      if (incomingMsg.sender_id) {
+        if (profilesCache[incomingMsg.sender_id]) {
+          senderName = profilesCache[incomingMsg.sender_id].display_name || "Usuario";
+          senderAvatar = profilesCache[incomingMsg.sender_id].avatar_url;
+          senderUsername = profilesCache[incomingMsg.sender_id].username || "amigo";
+        } else {
+          const friend = friendsList.find((f) => f.id === incomingMsg.sender_id);
+          if (friend) {
+            senderName = friend.display_name;
+            senderAvatar = friend.avatar_url;
+            senderUsername = friend.username;
+          } else {
+            const chatMatch = chats.find((c) => c.id === incomingMsg.conversation_id);
+            if (chatMatch?.otherUser) {
+              senderName = chatMatch.otherUser.display_name;
+              senderAvatar = chatMatch.otherUser.avatar_url;
+              senderUsername = chatMatch.otherUser.username;
+            } else {
+              getProfile(incomingMsg.sender_id).then((p) => {
+                if (p) {
+                  setProfilesCache((prev) => ({ ...prev, [incomingMsg.sender_id]: p }));
+                  setIncomingMessageToast((cur) =>
+                    cur && cur.senderId === incomingMsg.sender_id
+                      ? {
+                          ...cur,
+                          senderName: p.display_name,
+                          senderAvatar: p.avatar_url,
+                          senderUsername: p.username,
+                        }
+                      : cur
+                  );
+                }
+              });
+            }
+          }
+        }
+      }
+
+      // Preparar texto corto del contenido
+      let previewText = incomingMsg.content || "";
+      if (incomingMsg.type === "image") previewText = "📷 Foto adjunta";
+      else if (incomingMsg.type === "audio") previewText = "🎤 Nota de voz";
+      else if (incomingMsg.type === "video") previewText = "🎥 Video";
+      else if (incomingMsg.type === "youtube") previewText = "▶️ Video de YouTube";
+      else if (incomingMsg.type === "iptv") previewText = "📺 Canal IPTV";
+      else if (previewText.length > 55) {
+        previewText = previewText.substring(0, 55) + "...";
+      }
+
+      // Mostrar Aviso Visual (Banner Flotante) durante 4 segundos
+      if (messageToastTimeoutRef.current) {
+        clearTimeout(messageToastTimeoutRef.current);
+      }
+
+      setIncomingMessageToast({
+        id: incomingMsg.id,
+        conversationId: incomingMsg.conversation_id,
+        senderId: incomingMsg.sender_id,
+        senderName,
+        senderAvatar,
+        senderUsername,
+        text: previewText || "Nuevo mensaje recibido",
+        created_at: incomingMsg.created_at,
+      });
+
+      messageToastTimeoutRef.current = setTimeout(() => {
+        setIncomingMessageToast(null);
+      }, 4000);
+
+      // Refrescar lista de chats para actualizar último mensaje
+      reloadConversations();
+    });
+
+    return () => {
+      unsubscribe();
+      if (messageToastTimeoutRef.current) {
+        clearTimeout(messageToastTimeoutRef.current);
+      }
+    };
+  }, [currentUserId, chats, friendsList, profilesCache]);
+
   // --- MÉTODOS DE CREDENCIALES Y AUTENTICACIÓN SUPABASE ---
 
   const handleSaveCredentials = async (e: React.FormEvent) => {
@@ -779,6 +954,52 @@ export default function App() {
     }
   };
 
+  const handleOpenChat = (chat: any) => {
+    setActiveChat(chat);
+    setCurrentView("chat_room");
+    // 3. CONTADOR DE UNREAD: Cuando el usuario abra el chat con ese amigo, el contador se reinicia a 0
+    setUnreadCounts((prev) => ({ ...prev, [chat.id]: 0 }));
+    if (incomingMessageToast?.conversationId === chat.id) {
+      setIncomingMessageToast(null);
+    }
+  };
+
+  const handleOpenFromMessageBanner = async (toastItem: {
+    conversationId: string;
+    senderId: string;
+    senderName: string;
+    senderAvatar?: string;
+    senderUsername?: string;
+  }) => {
+    setIncomingMessageToast(null);
+    // Reiniciar contador de no leídos de esa conversación a 0
+    setUnreadCounts((prev) => ({ ...prev, [toastItem.conversationId]: 0 }));
+
+    let chatFound = chats.find((c) => c.id === toastItem.conversationId);
+    if (!chatFound && currentUserId) {
+      const allConvs = await getUserConversations(currentUserId);
+      setChats(allConvs);
+      chatFound = allConvs.find((c) => c.id === toastItem.conversationId);
+    }
+
+    if (chatFound) {
+      setActiveChat(chatFound);
+      setCurrentView("chat_room");
+    } else {
+      setActiveChat({
+        id: toastItem.conversationId,
+        type: "private",
+        otherUser: {
+          id: toastItem.senderId,
+          display_name: toastItem.senderName,
+          username: toastItem.senderUsername || "usuario",
+          avatar_url: toastItem.senderAvatar,
+        },
+      });
+      setCurrentView("chat_room");
+    }
+  };
+
   const handleStartChatWithUser = async (targetProfile: SupabaseProfile) => {
     if (!currentUser?.id) return;
     try {
@@ -788,6 +1009,7 @@ export default function App() {
         type: "private",
         otherUser: targetProfile,
       });
+      setUnreadCounts((prev) => ({ ...prev, [convId]: 0 }));
       setCurrentView("chat_room");
       setSearchQuery("");
       setSearchResults([]);
@@ -1274,31 +1496,50 @@ export default function App() {
                       const title = isGroup ? chat.name : (chat.otherUser?.display_name || "Usuario");
                       const subtitle = isGroup ? `Código: ${chat.invite_code}` : `@${chat.otherUser?.username || "usuario"}`;
                       const avatar = isGroup ? generateInitialsAvatar(title) : (chat.otherUser?.avatar_url || generateInitialsAvatar(title));
+                      const unread = unreadCounts[chat.id] || 0;
 
                       return (
                         <button
                           key={chat.id}
-                          onClick={() => {
-                            setActiveChat(chat);
-                            setCurrentView("chat_room");
-                          }}
-                          className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left backdrop-blur-sm ${
-                            activeChat?.id === chat.id ? "bg-indigo-600/30 border border-indigo-400/40 shadow-sm" : "bg-slate-900/30 hover:bg-slate-800/50 border border-slate-800/40"
+                          onClick={() => handleOpenChat(chat)}
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left backdrop-blur-sm relative group ${
+                            activeChat?.id === chat.id 
+                              ? "bg-indigo-600/30 border border-indigo-400/40 shadow-sm" 
+                              : unread > 0
+                                ? "bg-slate-900/70 hover:bg-slate-800/80 border border-indigo-500/40 shadow-md shadow-indigo-950/40"
+                                : "bg-slate-900/30 hover:bg-slate-800/50 border border-slate-800/40"
                           }`}
                         >
-                          <img src={avatar} alt="" className="w-11 h-11 rounded-full object-cover shrink-0" />
+                          <div className="relative shrink-0">
+                            <img src={avatar} alt="" className="w-11 h-11 rounded-full object-cover shrink-0" />
+                            {unread > 0 && (
+                              <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-indigo-500 rounded-full border-2 border-slate-900 animate-ping" />
+                            )}
+                          </div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs font-semibold text-white truncate">{title}</p>
-                              {chat.lastMessage && (
-                                <span className="text-[10px] text-slate-500">
-                                  {formatTime(chat.lastMessage.created_at)}
-                                </span>
-                              )}
+                            <div className="flex items-center justify-between gap-1">
+                              <p className={`text-xs truncate ${unread > 0 ? "font-bold text-white" : "font-semibold text-slate-200"}`}>
+                                {title}
+                              </p>
+                              <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                                {chat.lastMessage && (
+                                  <span className={`text-[10px] ${unread > 0 ? "text-indigo-400 font-semibold" : "text-slate-500"}`}>
+                                    {formatTime(chat.lastMessage.created_at)}
+                                  </span>
+                                )}
+                                {/* 3. CONTADOR DE UNREAD (Globito con número al lado del nombre) */}
+                                {unread > 0 && (
+                                  <span className="px-2 py-0.5 min-w-[20px] text-center bg-indigo-600 text-white text-[10px] font-black rounded-full shadow-lg shadow-indigo-600/50 animate-pulse shrink-0">
+                                    {unread}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                              {chat.lastMessage ? chat.lastMessage.content : subtitle}
-                            </p>
+                            <div className="flex items-center justify-between gap-2 mt-0.5">
+                              <p className={`text-[11px] truncate flex-1 ${unread > 0 ? "text-slate-100 font-medium" : "text-slate-400"}`}>
+                                {chat.lastMessage ? chat.lastMessage.content : subtitle}
+                              </p>
+                            </div>
                           </div>
                         </button>
                       );
@@ -1906,6 +2147,63 @@ export default function App() {
                 >
                   Descartar
                 </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 2. AVISO VISUAL (Banner Flotante): MENSAJE RECIBIDO (DURACIÓN 4 SEGUNDOS) */}
+      <AnimatePresence>
+        {incomingMessageToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -25, scale: 0.92 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            onClick={() => handleOpenFromMessageBanner(incomingMessageToast)}
+            className="fixed top-5 right-5 z-[110] max-w-sm w-[90vw] sm:w-80 bg-slate-900/95 border-2 border-indigo-500/70 backdrop-blur-xl p-3.5 rounded-2xl shadow-2xl shadow-indigo-950/80 flex items-start gap-3 cursor-pointer group hover:border-indigo-400 transition-all hover:scale-[1.02]"
+          >
+            <div className="relative shrink-0">
+              <div className="w-10 h-10 rounded-full bg-indigo-600/30 border border-indigo-400/50 flex items-center justify-center text-indigo-300 font-bold overflow-hidden">
+                {incomingMessageToast.senderAvatar ? (
+                  <img src={incomingMessageToast.senderAvatar} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <MessageSquare className="w-5 h-5 text-indigo-300" />
+                )}
+              </div>
+              <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900 animate-ping" />
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1">
+                  <MessageSquare className="w-3 h-3 text-indigo-400 shrink-0" />
+                  <span className="truncate">Mensaje recibido de {incomingMessageToast.senderName}</span>
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIncomingMessageToast(null);
+                  }}
+                  className="text-slate-400 hover:text-white p-0.5 rounded-md transition-colors"
+                  title="Cerrar"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-100 font-medium line-clamp-2 break-words mt-1">
+                {incomingMessageToast.text}
+              </p>
+
+              <div className="mt-2 flex items-center justify-between text-[10px]">
+                <span className="text-indigo-300 font-semibold group-hover:underline">
+                  Toca para abrir chat 💬
+                </span>
+                <span className="text-slate-400 font-mono">
+                  4s
+                </span>
               </div>
             </div>
           </motion.div>

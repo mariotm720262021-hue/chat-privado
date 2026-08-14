@@ -220,7 +220,7 @@ export async function sendFriendRequest(senderId: string, receiverId: string, se
 
     // 3. Crear o preparar conversación de respaldo
     try {
-      await createOrGetPrivateConversation(senderId, receiverId);
+      await createPrivateConversation(senderId, receiverId);
     } catch (e) {}
 
     return { success: true };
@@ -1231,3 +1231,32 @@ export function subscribeToMessages(
     supabase.removeChannel(channel);
   };
 }
+
+/**
+ * Suscribe a nivel global a todos los eventos INSERT en la tabla messages de Supabase Realtime
+ */
+export function subscribeToAllMessages(
+  onNewMessage: (msg: SupabaseMessage) => void
+) {
+  const channel = supabase
+    .channel("global_messages_realtime_channel")
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "messages",
+      },
+      (payload) => {
+        if (payload.new) {
+          onNewMessage(payload.new as SupabaseMessage);
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
