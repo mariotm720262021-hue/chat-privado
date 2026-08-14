@@ -55,6 +55,7 @@ import {
   UserCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { AppLogo } from "./components/AppLogo";
 
 import { 
   supabase, 
@@ -765,7 +766,7 @@ export default function App() {
     return (
       <div className="app-viewport flex items-center justify-center bg-slate-950 text-indigo-400">
         <div className="flex flex-col items-center gap-3">
-          <Flame className="w-12 h-12 animate-pulse" />
+          <AppLogo className="w-16 h-16 animate-pulse" />
           <p className="text-slate-400 font-medium text-sm">Cargando Chat Privado (Supabase)...</p>
         </div>
       </div>
@@ -783,10 +784,10 @@ export default function App() {
             animate={{ opacity: 1, y: 0 }}
             className="w-full max-w-md bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl backdrop-blur-xl"
           >
-            {/* Header del Login */}
+            {/* Header del Login con Nuevo Logo */}
             <div className="text-center mb-6">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-500/10 text-indigo-400 mb-3 border border-indigo-500/20">
-                <ShieldCheck className="w-8 h-8" />
+              <div className="flex items-center justify-center mb-3">
+                <AppLogo className="w-20 h-20" />
               </div>
               <h1 className="text-2xl font-bold text-white tracking-tight">Chat Privado</h1>
               <p className="text-xs text-slate-400 mt-1">
@@ -1430,7 +1431,7 @@ export default function App() {
               </>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-500">
-                <ShieldCheck className="w-12 h-12 text-slate-700 mb-3" />
+                <AppLogo className="w-16 h-16 mb-3" />
                 <h3 className="text-sm font-semibold text-slate-300">Bienvenido a Chat Privado</h3>
                 <p className="text-xs max-w-sm mt-1">
                   Selecciona una conversación existente o busca a un usuario por su @usuario para chatear en tiempo real.
