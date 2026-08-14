@@ -223,10 +223,10 @@ export async function loginWithEmail(email: string, pass: string) {
 }
 
 /**
- * Inicia sesión / Registro con OAuth (Google, Facebook).
+ * Inicia sesión / Registro con OAuth (Google).
  * Utiliza dinámicamente la URL real actual del navegador (window.location.origin / href).
  */
-export async function loginWithOAuth(provider: "google" | "facebook", redirectUrl?: string) {
+export async function loginWithOAuth(provider: "google" = "google", redirectUrl?: string) {
   // Determina dinámicamente la URL de origen actual en el navegador
   const currentUrl = typeof window !== "undefined" 
     ? window.location.href.split('?')[0].split('#')[0]
@@ -238,10 +238,10 @@ export async function loginWithOAuth(provider: "google" | "facebook", redirectUr
     provider,
     options: {
       redirectTo: targetRedirect,
-      queryParams: provider === "google" ? {
+      queryParams: {
         access_type: "offline",
         prompt: "consent",
-      } : undefined,
+      },
     },
   });
   if (error) throw error;
