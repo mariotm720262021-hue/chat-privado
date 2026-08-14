@@ -286,6 +286,27 @@ export default function App() {
           }
         }
       )
+      .on(
+        'broadcast',
+        { event: 'incoming_friend_request' },
+        (payload) => {
+          console.log('🔔 Solicitud recibida vía user-notifications:', payload);
+          fetchRequests();
+          playFriendNotificationSound();
+          if (payload?.payload?.sender) {
+            setIncomingRequestToast({
+              senderName: payload.payload.sender.display_name,
+              senderUsername: payload.payload.sender.username,
+              avatarUrl: payload.payload.sender.avatar_url,
+            });
+          } else {
+            setIncomingRequestToast({
+              senderName: "Usuario",
+              senderUsername: "contacto",
+            });
+          }
+        }
+      )
       .subscribe((status) => {
         console.log('Estado de conexión Realtime:', status);
       });
