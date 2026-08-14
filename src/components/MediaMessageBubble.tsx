@@ -42,6 +42,26 @@ export function extractUrls(text: string): string[] {
   return matches || [];
 }
 
+// Elimina cualquier URL o título técnico para que NUNCA se muestren direcciones web en pantalla
+export function cleanCommentText(text: string): string {
+  if (!text) return "";
+  // Remover cualquier enlace http:// o https://
+  let clean = text.replace(/https?:\/\/[^\s]+/gi, "").trim();
+  // Remover títulos genéricos predeterminados si vinieran en el mensaje
+  const genericTitles = [
+    "YouTube Video",
+    "Video MP4 Directo",
+    "Stream IPTV / HLS (Demo)",
+    "Audio MP3 / Música",
+    "Canal IPTV",
+    "Video Reproducible",
+  ];
+  if (genericTitles.includes(clean)) {
+    return "";
+  }
+  return clean;
+}
+
 export const MediaMessageBubble: React.FC<MediaMessageBubbleProps> = ({
   content,
   type = "text",
@@ -56,13 +76,16 @@ export const MediaMessageBubble: React.FC<MediaMessageBubbleProps> = ({
   const detectedType = type !== "text" ? type : (rawUrl ? detectMediaType(rawUrl) : null);
   const ytId = rawUrl ? extractYouTubeId(rawUrl) : null;
 
-  // 1. EMBED DE YOUTUBE
+  // Comentario limpio del usuario (sin enlaces URL expuestos)
+  const displayComment = cleanCommentText(content);
+
+  // 1. EMBED DE YOUTUBE (Sin mostrar URLs)
   if (detectedType === "youtube" && ytId) {
     return (
       <div className="space-y-2">
-        {content && content !== rawUrl && (
-          <p className="whitespace-pre-wrap break-words text-xs">{content}</p>
-        )}
+        {displayComment ? (
+          <p className="whitespace-pre-wrap break-words text-xs mb-1 font-medium">{displayComment}</p>
+        ) : null}
         <div className="rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-video relative max-w-sm sm:max-w-md w-full shadow-lg">
           {showIframe ? (
             <iframe
@@ -87,7 +110,7 @@ export const MediaMessageBubble: React.FC<MediaMessageBubbleProps> = ({
                   <Play className="w-5 h-5 fill-current ml-0.5" />
                 </div>
               </div>
-              <div className="absolute top-2 left-2 px-2 py-1 bg-black/75 rounded-md flex items-center gap-1.5 text-[10px] text-white font-medium">
+              <div className="absolute top-2 left-2 px-2 py-1 bg-black/75 rounded-md flex items-center gap-1.5 text-[10px] text-white font-medium backdrop-blur-sm">
                 <Youtube className="w-3.5 h-3.5 text-rose-500" />
                 <span>YouTube</span>
               </div>
@@ -98,25 +121,25 @@ export const MediaMessageBubble: React.FC<MediaMessageBubbleProps> = ({
     );
   }
 
-  // 2. EMBED DE IPTV / STREAMING (.M3U8 / HLS)
+  // 2. EMBED DE IPTV / STREAMING (.M3U8 / HLS) (Sin mostrar URLs)
   if (detectedType === "iptv" && rawUrl) {
     return (
       <div className="space-y-2 max-w-sm sm:max-w-md w-full">
-        {content && content !== rawUrl && (
-          <p className="whitespace-pre-wrap break-words text-xs">{content}</p>
-        )}
+        {displayComment ? (
+          <p className="whitespace-pre-wrap break-words text-xs mb-1 font-medium">{displayComment}</p>
+        ) : null}
         <IPTVPlayer src={rawUrl} title="Canal / Transmisión IPTV" isLive={true} />
       </div>
     );
   }
 
-  // 3. EMBED DE VIDEO DIRECTO (MP4 / WEBM)
+  // 3. EMBED DE VIDEO DIRECTO (MP4 / WEBM) (Sin mostrar URLs)
   if (detectedType === "video" && rawUrl) {
     return (
       <div className="space-y-2 max-w-sm sm:max-w-md w-full">
-        {content && content !== rawUrl && (
-          <p className="whitespace-pre-wrap break-words text-xs">{content}</p>
-        )}
+        {displayComment ? (
+          <p className="whitespace-pre-wrap break-words text-xs mb-1 font-medium">{displayComment}</p>
+        ) : null}
         <div className="rounded-xl overflow-hidden border border-slate-700 bg-black shadow-md">
           <div className="p-2 bg-slate-900 border-b border-slate-800 flex items-center gap-1.5 text-[11px] text-indigo-300 font-medium">
             <Film className="w-3.5 h-3.5 text-indigo-400" />
@@ -133,17 +156,17 @@ export const MediaMessageBubble: React.FC<MediaMessageBubbleProps> = ({
     );
   }
 
-  // 4. EMBED DE AUDIO / MP3 DIRECTO
+  // 4. EMBED DE AUDIO / MP3 DIRECTO (Sin mostrar URLs)
   if (detectedType === "audio" && rawUrl) {
     return (
       <div className="space-y-2">
-        {content && content !== rawUrl && (
-          <p className="whitespace-pre-wrap break-words text-xs">{content}</p>
-        )}
+        {displayComment ? (
+          <p className="whitespace-pre-wrap break-words text-xs mb-1 font-medium">{displayComment}</p>
+        ) : null}
         <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-700/60">
           <div className="flex items-center gap-1.5 text-[10px] text-indigo-300 mb-1.5 font-medium">
             <Disc className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
-            <span>Audio / MP3</span>
+            <span>Música / Audio MP3</span>
           </div>
           <AudioPlayer src={rawUrl} isMe={isMe} />
         </div>
@@ -151,52 +174,31 @@ export const MediaMessageBubble: React.FC<MediaMessageBubbleProps> = ({
     );
   }
 
-  // 5. EMBED DE IMAGEN
-  if ((type === "image" || detectedType === "image") && rawUrl) {
+  // 5. IMAGEN
+  if ((type === "image" || detectedType === "image") && (mediaUrl || rawUrl)) {
+    const imgUrl = mediaUrl || rawUrl;
     return (
       <div className="space-y-2">
-        <img
-          src={rawUrl}
-          alt="Adjunto"
-          onClick={() => onImageClick && onImageClick(rawUrl)}
-          className="w-full max-h-72 object-cover rounded-xl cursor-pointer hover:opacity-95 transition-opacity border border-slate-800"
-        />
-        {content && content !== rawUrl && (
-          <p className="whitespace-pre-wrap break-words text-xs">{content}</p>
-        )}
+        {displayComment ? (
+          <p className="whitespace-pre-wrap break-words text-xs mb-1 font-medium">{displayComment}</p>
+        ) : null}
+        <div
+          onClick={() => onImageClick && onImageClick(imgUrl)}
+          className="rounded-xl overflow-hidden cursor-pointer max-w-xs sm:max-w-sm border border-slate-700/60 shadow-md hover:opacity-95 transition-opacity"
+        >
+          <img
+            src={imgUrl}
+            alt="Adjunto"
+            className="w-full h-auto max-h-80 object-cover bg-slate-950"
+            loading="lazy"
+          />
+        </div>
       </div>
     );
   }
 
-  // 6. TEXTO REGULAR CON PARSEO DE ENLACES
-  const renderTextWithLinks = (text: string) => {
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const parts = text.split(urlRegex);
-
-    return parts.map((part, index) => {
-      if (part.match(urlRegex)) {
-        return (
-          <a
-            key={index}
-            href={part}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`underline font-medium break-all inline-flex items-center gap-1 ${
-              isMe ? "text-indigo-100 hover:text-white" : "text-indigo-400 hover:text-indigo-300"
-            }`}
-          >
-            <span>{part}</span>
-            <ExternalLink className="w-3 h-3 inline shrink-0" />
-          </a>
-        );
-      }
-      return <span key={index}>{part}</span>;
-    });
-  };
-
+  // 6. MENSAJE DE TEXTO NORMAL (Sin formatos multimedia detectados)
   return (
-    <p className="whitespace-pre-wrap break-words text-xs leading-relaxed">
-      {renderTextWithLinks(content)}
-    </p>
+    <p className="whitespace-pre-wrap break-words text-xs leading-relaxed">{content}</p>
   );
 };

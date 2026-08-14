@@ -229,7 +229,6 @@ export const IPTVPlayer: React.FC<IPTVPlayerProps> = ({
             <h4 className="text-xs font-semibold text-white truncate">
               {title || (isAudioOnly ? "Transmisión de Audio / Radio" : "Canal IPTV / Streaming en Vivo")}
             </h4>
-            <p className="text-[10px] text-slate-400 font-mono truncate">{src}</p>
           </div>
         </div>
 

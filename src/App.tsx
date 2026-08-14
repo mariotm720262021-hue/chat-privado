@@ -642,7 +642,7 @@ export default function App() {
       reloadConversations();
     } catch (err: any) {
       console.error("Error creando chat privado:", err);
-      alert(err.message || "Error creando conversación. Asegúrate de ejecutar el script SQL en Supabase.");
+      alert(err.message || "No se pudo iniciar el chat privado. Verifica la conexión o la configuración de Supabase.");
     }
   };
 
@@ -653,7 +653,7 @@ export default function App() {
   ) => {
     if (!activeChat?.id || !currentUser?.id) return;
     try {
-      const content = caption ? `${caption}\n${url}` : url;
+      const content = caption && caption.trim() ? caption.trim() : "";
       await sendMessage(
         activeChat.id,
         currentUser.id,
@@ -984,13 +984,6 @@ export default function App() {
                   <UserPlus className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => setShowIPTVModal(true)}
-                  title="Reproductor IPTV & Streaming"
-                  className="p-2 text-rose-300 hover:text-white bg-rose-600/20 hover:bg-rose-600/40 rounded-xl transition-colors backdrop-blur-sm border border-rose-500/30"
-                >
-                  <Tv className="w-4 h-4" />
-                </button>
-                <button
                   onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
                   title="Crear / Unirse a Grupo"
                   className="p-2 text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 rounded-xl transition-colors backdrop-blur-sm"
@@ -1020,31 +1013,23 @@ export default function App() {
                 />
               </div>
 
-              {/* Botón de Acceso Rápido: Agregar Amigo, Crear Grupo, IPTV */}
-              <div className="mt-2.5 grid grid-cols-3 gap-1.5">
+              {/* Botón de Acceso Rápido: Agregar Amigo & Crear Grupo */}
+              <div className="mt-2.5 grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setShowAddFriendModal(true)}
-                  className="py-1.5 px-2 bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 rounded-xl text-[11px] font-semibold text-white flex items-center justify-center gap-1 transition-colors shadow-sm backdrop-blur-sm"
+                  className="py-2 px-2.5 bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors shadow-sm backdrop-blur-sm"
                   title="Agregar nuevo amigo y privacidad"
                 >
-                  <UserPlus className="w-3 h-3 text-indigo-300" />
+                  <UserPlus className="w-3.5 h-3.5 text-indigo-300" />
                   <span className="truncate">Amigos</span>
                 </button>
                 <button
                   onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
-                  className="py-1.5 px-2 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-700/70 rounded-xl text-[11px] font-medium text-slate-100 flex items-center justify-center gap-1 transition-colors backdrop-blur-sm"
-                  title="Crear grupo de chat"
+                  className="py-2 px-2.5 bg-slate-900/70 hover:bg-slate-800/90 border border-slate-700/70 rounded-xl text-xs font-medium text-slate-100 flex items-center justify-center gap-1.5 transition-colors backdrop-blur-sm"
+                  title="Crear o unirse a grupo"
                 >
-                  <Users className="w-3 h-3 text-emerald-400" />
-                  <span className="truncate">Grupo</span>
-                </button>
-                <button
-                  onClick={() => setShowIPTVModal(true)}
-                  className="py-1.5 px-2 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-700/70 rounded-xl text-[11px] font-medium text-slate-100 flex items-center justify-center gap-1 transition-colors backdrop-blur-sm"
-                  title="Reproductor IPTV y enlaces MP3/Video"
-                >
-                  <Tv className="w-3 h-3 text-rose-400" />
-                  <span className="truncate">IPTV</span>
+                  <Users className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="truncate">Crear Grupo</span>
                 </button>
               </div>
             </div>
@@ -1203,14 +1188,6 @@ export default function App() {
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => setShowIPTVModal(true)}
-                      title="Abrir Reproductor IPTV & Multimedia"
-                      className="p-2 text-rose-300 hover:text-white bg-rose-600/20 hover:bg-rose-600/40 rounded-xl border border-rose-500/30 transition-colors"
-                    >
-                      <Tv className="w-4 h-4" />
-                    </button>
-
                     {activeChat.type === "group" && (
                       <button
                         onClick={() => setShowShareGroupModal(true)}

@@ -67,6 +67,19 @@ export function resetSupabaseCredentials() {
   return { supabaseUrl, supabaseKey };
 }
 
+export function generateUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    try {
+      return crypto.randomUUID();
+    } catch (_) {}
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export interface SupabaseProfile {
   id: string;
   username: string;
@@ -329,32 +342,45 @@ export async function ensureProfileExists(userId: string, force: boolean = false
   }
 
   const { data: { user } } = await supabase.auth.getUser();
-  const email = user?.email || "";
-  const emailPrefix = email ? email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "") : "usuario";
-  const username = user?.user_metadata?.username || emailPrefix || `user_${userId.substring(0, 6)}`;
-  const displayName = user?.user_metadata?.display_name || username;
+  const isSelf = user?.id === userId;
+
+  let username = `user_${userId.substring(0, 8)}`;
+  let displayName = username;
+  let avatarUrl = `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`;
+
+  if (isSelf && user) {
+    const email = user?.email || "";
+    const emailPrefix = email ? email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "") : "";
+    username = user?.user_metadata?.username || emailPrefix || `user_${userId.substring(0, 8)}`;
+    displayName = user?.user_metadata?.display_name || user?.user_metadata?.full_name || username;
+    avatarUrl = user?.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`;
+  }
 
   const profileData: SupabaseProfile = {
     id: userId,
     username: username,
     display_name: displayName,
-    avatar_url: `https://api.dicebear.com/7.x/bottts/svg?seed=${username}`,
+    avatar_url: avatarUrl,
     is_online: true,
     last_seen: new Date().toISOString(),
   };
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .upsert(profileData)
-    .select()
-    .maybeSingle();
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .upsert(profileData, { onConflict: "id" })
+      .select()
+      .maybeSingle();
 
-  if (error) {
-    console.warn("Aviso al asegurar perfil en public.profiles:", error);
+    if (error) {
+      console.warn("Aviso al asegurar perfil en public.profiles:", error);
+      return profileData;
+    }
+
+    return data || profileData;
+  } catch (err) {
     return profileData;
   }
-
-  return data || profileData;
 }
 
 /**
@@ -424,11 +450,10 @@ export async function createPrivateConversation(currentUserId: string, otherUser
   await ensureProfileExists(currentUserId).catch(() => null);
   await ensureProfileExists(otherUserId).catch(() => null);
 
-  // Obtener auth user ID para created_by
   const authUser = (await supabase.auth.getUser())?.data?.user;
   const creatorId = authUser?.id || currentUserId;
 
-  // Comprobar si ya existe una conversación privada entre ambos
+  // 1. Comprobar si ya existe una conversación privada entre ambos
   try {
     const { data: myConvs } = await supabase
       .from("conversation_participants")
@@ -462,61 +487,50 @@ export async function createPrivateConversation(currentUserId: string, otherUser
     console.warn("Aviso comprobando conversaciones existentes:", err);
   }
 
-  // Generar ID único en cliente
-  const generatedId = (typeof crypto !== "undefined" && crypto.randomUUID) 
-    ? crypto.randomUUID() 
-    : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  // 2. Generar un UUID v4 válido garantizado en el cliente
+  const conversationId = generateUUID();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  let conversationId = generatedId;
-
-  // Intento 1: Inserción directa
-  const { data: newConv, error: convErr } = await supabase
+  // 3. Inserción SIN .select() para evitar que la política SELECT de RLS falle antes de insertar los participantes
+  const { error: convErr } = await supabase
     .from("conversations")
     .insert({
-      id: generatedId,
+      id: conversationId,
       type: "private",
       created_by: creatorId,
       expires_at: expiresAt,
-    })
-    .select("id")
-    .maybeSingle();
+    });
 
-  if (convErr) {
-    console.warn("Aviso insertando conversación:", convErr);
-    // Si falló por RLS o restricción de created_by
-    if (convErr.code === "42501" || convErr.message?.includes("security policy") || convErr.message?.includes("foreign key")) {
-      // Reintentar sin created_by
-      const { error: retryErr } = await supabase
-        .from("conversations")
-        .insert({
-          id: generatedId,
-          type: "private",
-          expires_at: expiresAt,
-        });
+  if (convErr && convErr.code !== "23505") {
+    console.warn("Aviso insertando conversación privada con created_by:", convErr);
+    // Intento secundario sin created_by si hay restricción de foreign key o RLS
+    const { error: retryErr } = await supabase
+      .from("conversations")
+      .insert({
+        id: conversationId,
+        type: "private",
+        expires_at: expiresAt,
+      });
 
-      if (retryErr && retryErr.code !== "23505") {
-        throw new Error(
-          `Error al crear la conversación (${retryErr.message}). Asegúrate de ejecutar el script SQL actualizado en Supabase -> SQL Editor.`
-        );
-      }
-    } else {
-      throw convErr;
+    if (retryErr && retryErr.code !== "23505") {
+      console.error("Error al crear fila de conversación:", retryErr);
+      throw new Error(
+        `Error al crear la conversación (${retryErr.message}). Asegúrate de ejecutar el script SQL actualizado en Supabase -> SQL Editor.`
+      );
     }
   }
 
-  if (newConv?.id) {
-    conversationId = newConv.id;
-  }
-
-  // Insertar participantes
-  const { error: partErr } = await supabase.from("conversation_participants").upsert([
-    { conversation_id: conversationId, user_id: currentUserId },
-    { conversation_id: conversationId, user_id: otherUserId },
-  ]);
-
-  if (partErr && partErr.code !== "23505") {
-    console.warn("Aviso insertando participantes:", partErr);
+  // 4. Inmediatamente insertar los dos participantes
+  try {
+    const { error: partErr } = await supabase.from("conversation_participants").insert([
+      { conversation_id: conversationId, user_id: currentUserId },
+      { conversation_id: conversationId, user_id: otherUserId },
+    ]);
+    if (partErr && partErr.code !== "23505") {
+      console.warn("Aviso insertando participantes:", partErr);
+    }
+  } catch (pErr) {
+    console.warn("Aviso insertando participantes:", pErr);
   }
 
   return conversationId;
@@ -532,14 +546,12 @@ export async function createGroupConversation(currentUserId: string, groupName: 
   const authUser = (await supabase.auth.getUser())?.data?.user;
   const creatorId = authUser?.id || currentUserId;
 
-  const generatedId = (typeof crypto !== "undefined" && crypto.randomUUID) 
-    ? crypto.randomUUID() 
-    : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  const conversationId = generateUUID();
   const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  let createdGroup: SupabaseConversation = {
-    id: generatedId,
+  const createdGroup: SupabaseConversation = {
+    id: conversationId,
     type: "group",
     name: groupName,
     invite_code: inviteCode,
@@ -548,51 +560,44 @@ export async function createGroupConversation(currentUserId: string, groupName: 
     expires_at: expiresAt,
   };
 
-  const { data: newGroup, error } = await supabase
+  // Inserción sin .select() para evitar error RLS de RETURNING
+  const { error: groupErr } = await supabase
     .from("conversations")
     .insert({
-      id: generatedId,
+      id: conversationId,
       type: "group",
       name: groupName,
       invite_code: inviteCode,
       created_by: creatorId,
       expires_at: expiresAt,
-    })
-    .select()
-    .maybeSingle();
+    });
 
-  if (error) {
-    console.warn("Aviso insertando grupo:", error);
-    if (error.code === "42501" || error.message?.includes("security policy") || error.code === "23503") {
-      const { error: retryErr } = await supabase
-        .from("conversations")
-        .insert({
-          id: generatedId,
-          type: "group",
-          name: groupName,
-          invite_code: inviteCode,
-          expires_at: expiresAt,
-        });
+  if (groupErr && groupErr.code !== "23505") {
+    console.warn("Aviso insertando grupo:", groupErr);
+    const { error: retryErr } = await supabase
+      .from("conversations")
+      .insert({
+        id: conversationId,
+        type: "group",
+        name: groupName,
+        invite_code: inviteCode,
+        expires_at: expiresAt,
+      });
 
-      if (retryErr && retryErr.code !== "23505") {
-        throw new Error(
-          `Error creando grupo (${retryErr.message}). Ejecuta el script SQL en Supabase -> SQL Editor.`
-        );
-      }
-    } else {
-      throw error;
+    if (retryErr && retryErr.code !== "23505") {
+      throw new Error(
+        `Error creando grupo (${retryErr.message}). Ejecuta el script SQL en Supabase -> SQL Editor.`
+      );
     }
   }
 
-  if (newGroup) {
-    createdGroup = newGroup;
-  }
-
   // Agregar al creador como participante
-  await supabase.from("conversation_participants").upsert({
-    conversation_id: createdGroup.id,
-    user_id: currentUserId,
-  });
+  try {
+    await supabase.from("conversation_participants").insert({
+      conversation_id: conversationId,
+      user_id: currentUserId,
+    });
+  } catch (_) {}
 
   return createdGroup;
 }
@@ -776,9 +781,7 @@ export async function sendMessage(
 ) {
   await ensureProfileExists(senderId).catch(() => null);
   const expiresAt = burnSeconds ? new Date(Date.now() + burnSeconds * 1000).toISOString() : null;
-  const msgId = (typeof crypto !== "undefined" && crypto.randomUUID) 
-    ? crypto.randomUUID() 
-    : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  const msgId = generateUUID();
 
   // Si la base de datos tiene una restricción de comprobación CHECK antigua (text, image, audio) o RLS
   try {
