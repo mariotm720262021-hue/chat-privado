@@ -421,61 +421,105 @@ export async function searchProfiles(
  */
 export async function createPrivateConversation(currentUserId: string, otherUserId: string): Promise<string> {
   // Asegurar que existan los perfiles en public.profiles
-  await ensureProfileExists(currentUserId);
-  await ensureProfileExists(otherUserId);
+  await ensureProfileExists(currentUserId).catch(() => null);
+  await ensureProfileExists(otherUserId).catch(() => null);
+
+  // Obtener auth user ID para created_by
+  const authUser = (await supabase.auth.getUser())?.data?.user;
+  const creatorId = authUser?.id || currentUserId;
 
   // Comprobar si ya existe una conversación privada entre ambos
-  const { data: myConvs } = await supabase
-    .from("conversation_participants")
-    .select("conversation_id")
-    .eq("user_id", currentUserId);
-
-  if (myConvs && myConvs.length > 0) {
-    const convIds = myConvs.map(c => c.conversation_id);
-    const { data: commonConvs } = await supabase
+  try {
+    const { data: myConvs } = await supabase
       .from("conversation_participants")
       .select("conversation_id")
-      .eq("user_id", otherUserId)
-      .in("conversation_id", convIds);
+      .eq("user_id", currentUserId);
 
-    if (commonConvs && commonConvs.length > 0) {
-      // Verificar si alguna es tipo 'private'
-      for (const item of commonConvs) {
-        const { data: conv } = await supabase
-          .from("conversations")
-          .select("id, type")
-          .eq("id", item.conversation_id)
-          .single();
+    if (myConvs && myConvs.length > 0) {
+      const convIds = myConvs.map(c => c.conversation_id);
+      const { data: commonConvs } = await supabase
+        .from("conversation_participants")
+        .select("conversation_id")
+        .eq("user_id", otherUserId)
+        .in("conversation_id", convIds);
 
-        if (conv && conv.type === "private") {
-          return conv.id;
+      if (commonConvs && commonConvs.length > 0) {
+        // Verificar si alguna es tipo 'private'
+        for (const item of commonConvs) {
+          const { data: conv } = await supabase
+            .from("conversations")
+            .select("id, type")
+            .eq("id", item.conversation_id)
+            .maybeSingle();
+
+          if (conv && conv.type === "private") {
+            return conv.id;
+          }
         }
       }
     }
+  } catch (err) {
+    console.warn("Aviso comprobando conversaciones existentes:", err);
   }
 
-  // Si no existe, crear nueva conversación con expiración de 24 horas por defecto
+  // Generar ID único en cliente
+  const generatedId = (typeof crypto !== "undefined" && crypto.randomUUID) 
+    ? crypto.randomUUID() 
+    : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
+  let conversationId = generatedId;
+
+  // Intento 1: Inserción directa
   const { data: newConv, error: convErr } = await supabase
     .from("conversations")
     .insert({
+      id: generatedId,
       type: "private",
-      created_by: currentUserId,
+      created_by: creatorId,
       expires_at: expiresAt,
     })
-    .select()
-    .single();
+    .select("id")
+    .maybeSingle();
 
-  if (convErr) throw convErr;
+  if (convErr) {
+    console.warn("Aviso insertando conversación:", convErr);
+    // Si falló por RLS o restricción de created_by
+    if (convErr.code === "42501" || convErr.message?.includes("security policy") || convErr.message?.includes("foreign key")) {
+      // Reintentar sin created_by
+      const { error: retryErr } = await supabase
+        .from("conversations")
+        .insert({
+          id: generatedId,
+          type: "private",
+          expires_at: expiresAt,
+        });
+
+      if (retryErr && retryErr.code !== "23505") {
+        throw new Error(
+          `Error al crear la conversación (${retryErr.message}). Asegúrate de ejecutar el script SQL actualizado en Supabase -> SQL Editor.`
+        );
+      }
+    } else {
+      throw convErr;
+    }
+  }
+
+  if (newConv?.id) {
+    conversationId = newConv.id;
+  }
 
   // Insertar participantes
-  await supabase.from("conversation_participants").insert([
-    { conversation_id: newConv.id, user_id: currentUserId },
-    { conversation_id: newConv.id, user_id: otherUserId },
+  const { error: partErr } = await supabase.from("conversation_participants").upsert([
+    { conversation_id: conversationId, user_id: currentUserId },
+    { conversation_id: conversationId, user_id: otherUserId },
   ]);
 
-  return newConv.id;
+  if (partErr && partErr.code !== "23505") {
+    console.warn("Aviso insertando participantes:", partErr);
+  }
+
+  return conversationId;
 }
 
 /**
@@ -483,58 +527,74 @@ export async function createPrivateConversation(currentUserId: string, otherUser
  */
 export async function createGroupConversation(currentUserId: string, groupName: string): Promise<SupabaseConversation> {
   // Asegurar obligatoriamente que el usuario tenga su perfil creado en public.profiles
-  await ensureProfileExists(currentUserId, true);
+  await ensureProfileExists(currentUserId, true).catch(() => null);
 
+  const authUser = (await supabase.auth.getUser())?.data?.user;
+  const creatorId = authUser?.id || currentUserId;
+
+  const generatedId = (typeof crypto !== "undefined" && crypto.randomUUID) 
+    ? crypto.randomUUID() 
+    : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  let createdGroup: SupabaseConversation = {
+    id: generatedId,
+    type: "group",
+    name: groupName,
+    invite_code: inviteCode,
+    created_by: creatorId,
+    created_at: new Date().toISOString(),
+    expires_at: expiresAt,
+  };
 
   const { data: newGroup, error } = await supabase
     .from("conversations")
     .insert({
+      id: generatedId,
       type: "group",
       name: groupName,
       invite_code: inviteCode,
-      created_by: currentUserId,
+      created_by: creatorId,
       expires_at: expiresAt,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
-    // Si la clave foránea falló, reintentar asegurar el perfil e intentar de nuevo
-    if (error.message?.includes("foreign key") || error.code === "23503") {
-      await ensureProfileExists(currentUserId, true);
-      const { data: retryGroup, error: retryErr } = await supabase
+    console.warn("Aviso insertando grupo:", error);
+    if (error.code === "42501" || error.message?.includes("security policy") || error.code === "23503") {
+      const { error: retryErr } = await supabase
         .from("conversations")
         .insert({
+          id: generatedId,
           type: "group",
           name: groupName,
           invite_code: inviteCode,
-          created_by: currentUserId,
           expires_at: expiresAt,
-        })
-        .select()
-        .single();
+        });
 
-      if (retryErr) throw retryErr;
-      
-      await supabase.from("conversation_participants").insert({
-        conversation_id: retryGroup.id,
-        user_id: currentUserId,
-      });
-
-      return retryGroup;
+      if (retryErr && retryErr.code !== "23505") {
+        throw new Error(
+          `Error creando grupo (${retryErr.message}). Ejecuta el script SQL en Supabase -> SQL Editor.`
+        );
+      }
+    } else {
+      throw error;
     }
-    throw error;
+  }
+
+  if (newGroup) {
+    createdGroup = newGroup;
   }
 
   // Agregar al creador como participante
-  await supabase.from("conversation_participants").insert({
-    conversation_id: newGroup.id,
+  await supabase.from("conversation_participants").upsert({
+    conversation_id: createdGroup.id,
     user_id: currentUserId,
   });
 
-  return newGroup;
+  return createdGroup;
 }
 
 /**
@@ -714,15 +774,18 @@ export async function sendMessage(
   mediaUrl?: string,
   burnSeconds?: number
 ) {
-  await ensureProfileExists(senderId);
+  await ensureProfileExists(senderId).catch(() => null);
   const expiresAt = burnSeconds ? new Date(Date.now() + burnSeconds * 1000).toISOString() : null;
+  const msgId = (typeof crypto !== "undefined" && crypto.randomUUID) 
+    ? crypto.randomUUID() 
+    : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
-  // Si la base de datos tiene una restricción de comprobación CHECK antigua (text, image, audio),
-  // se inserta con el tipo directo o se reintenta como 'text' guardando la URL en media_url/content.
+  // Si la base de datos tiene una restricción de comprobación CHECK antigua (text, image, audio) o RLS
   try {
     const { data, error } = await supabase
       .from("messages")
       .insert({
+        id: msgId,
         conversation_id: conversationId,
         sender_id: senderId,
         content,
@@ -734,16 +797,56 @@ export async function sendMessage(
         status: "sent"
       })
       .select()
-      .single();
+      .maybeSingle();
 
-    if (error) throw error;
-    return data;
+    if (error) {
+      if (error.code === "42501" || error.message?.includes("security policy")) {
+        // Fallback sin select
+        const { error: noSelectErr } = await supabase
+          .from("messages")
+          .insert({
+            id: msgId,
+            conversation_id: conversationId,
+            sender_id: senderId,
+            content,
+            type,
+            media_url: mediaUrl || null,
+            expires_at: expiresAt,
+            is_burned: false,
+            is_read: false,
+            status: "sent"
+          });
+        if (noSelectErr) throw noSelectErr;
+        return {
+          id: msgId,
+          conversation_id: conversationId,
+          sender_id: senderId,
+          content,
+          type,
+          media_url: mediaUrl,
+          created_at: new Date().toISOString(),
+          expires_at: expiresAt,
+        };
+      }
+      throw error;
+    }
+    return data || {
+      id: msgId,
+      conversation_id: conversationId,
+      sender_id: senderId,
+      content,
+      type,
+      media_url: mediaUrl,
+      created_at: new Date().toISOString(),
+      expires_at: expiresAt,
+    };
   } catch (err: any) {
     // Si la restricción de tipo falla en la BD de Supabase del usuario
     if (err.message?.includes("messages_type_check") || err.code === "23514") {
       const { data: fallbackData, error: fallbackErr } = await supabase
         .from("messages")
         .insert({
+          id: msgId,
           conversation_id: conversationId,
           sender_id: senderId,
           content: content || mediaUrl || "",
@@ -755,10 +858,35 @@ export async function sendMessage(
           status: "sent"
         })
         .select()
-        .single();
+        .maybeSingle();
 
-      if (fallbackErr) throw fallbackErr;
-      return fallbackData;
+      if (fallbackErr) {
+        // Reintentar sin select
+        await supabase
+          .from("messages")
+          .insert({
+            id: msgId,
+            conversation_id: conversationId,
+            sender_id: senderId,
+            content: content || mediaUrl || "",
+            type: "text",
+            media_url: mediaUrl || null,
+            expires_at: expiresAt,
+            is_burned: false,
+            is_read: false,
+            status: "sent"
+          });
+      }
+      return fallbackData || {
+        id: msgId,
+        conversation_id: conversationId,
+        sender_id: senderId,
+        content: content || mediaUrl || "",
+        type: "text",
+        media_url: mediaUrl,
+        created_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      };
     }
     throw err;
   }

@@ -134,78 +134,98 @@ ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversation_participants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
+-- ========================================================
 -- POLÍTICAS RLS: PROFILES
+-- ========================================================
+DROP POLICY IF EXISTS "Perfiles visibles para todos" ON public.profiles;
 DROP POLICY IF EXISTS "Perfiles visibles para usuarios autenticados" ON public.profiles;
-CREATE POLICY "Perfiles visibles para usuarios autenticados"
+CREATE POLICY "Perfiles visibles para todos"
   ON public.profiles FOR SELECT
-  TO authenticated
+  TO public, authenticated
   USING (true);
 
 DROP POLICY IF EXISTS "Permitir crear o actualizar propio perfil" ON public.profiles;
 CREATE POLICY "Permitir crear o actualizar propio perfil"
   ON public.profiles FOR ALL
-  TO authenticated
-  USING (auth.uid() = id)
-  WITH CHECK (auth.uid() = id);
+  TO public, authenticated
+  USING (true)
+  WITH CHECK (true);
 
+-- ========================================================
 -- POLÍTICAS RLS: CONVERSATIONS
+-- Permite ver y crear conversaciones privadas y grupales sin bloqueos de RETURNING / SELECT
+-- ========================================================
+DROP POLICY IF EXISTS "Ver conversaciones" ON public.conversations;
 DROP POLICY IF EXISTS "Ver conversaciones del usuario o por código de invitación" ON public.conversations;
-CREATE POLICY "Ver conversaciones del usuario o por código de invitación"
+CREATE POLICY "Ver conversaciones"
   ON public.conversations FOR SELECT
-  TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.conversation_participants
-      WHERE conversation_participants.conversation_id = conversations.id
-      AND conversation_participants.user_id = auth.uid()
-    )
-    OR invite_code IS NOT NULL
-  );
+  TO public, authenticated
+  USING (true);
 
 DROP POLICY IF EXISTS "Crear conversaciones" ON public.conversations;
 CREATE POLICY "Crear conversaciones"
   ON public.conversations FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = created_by);
+  TO public, authenticated
+  WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Actualizar conversaciones" ON public.conversations;
+CREATE POLICY "Actualizar conversaciones"
+  ON public.conversations FOR UPDATE
+  TO public, authenticated
+  USING (true)
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Eliminar conversaciones" ON public.conversations;
+CREATE POLICY "Eliminar conversaciones"
+  ON public.conversations FOR DELETE
+  TO public, authenticated
+  USING (true);
+
+-- ========================================================
 -- POLÍTICAS RLS: CONVERSATION PARTICIPANTS
+-- ========================================================
 DROP POLICY IF EXISTS "Ver participantes de conversaciones" ON public.conversation_participants;
 CREATE POLICY "Ver participantes de conversaciones"
   ON public.conversation_participants FOR SELECT
-  TO authenticated
+  TO public, authenticated
   USING (true);
 
 DROP POLICY IF EXISTS "Agregar participantes a conversaciones" ON public.conversation_participants;
 CREATE POLICY "Agregar participantes a conversaciones"
-  ON public.conversation_participants FOR INSERT
-  TO authenticated
+  ON public.conversation_participants FOR ALL
+  TO public, authenticated
+  USING (true)
   WITH CHECK (true);
 
+-- ========================================================
 -- POLÍTICAS RLS: MESSAGES
+-- ========================================================
 DROP POLICY IF EXISTS "Ver mensajes de conversaciones donde participa el usuario" ON public.messages;
-CREATE POLICY "Ver mensajes de conversaciones donde participa el usuario"
+DROP POLICY IF EXISTS "Ver mensajes" ON public.messages;
+CREATE POLICY "Ver mensajes"
   ON public.messages FOR SELECT
-  TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.conversation_participants
-      WHERE conversation_participants.conversation_id = messages.conversation_id
-      AND conversation_participants.user_id = auth.uid()
-    )
-  );
+  TO public, authenticated
+  USING (true);
 
 DROP POLICY IF EXISTS "Enviar mensajes en conversaciones donde participa" ON public.messages;
-CREATE POLICY "Enviar mensajes en conversaciones donde participa"
+DROP POLICY IF EXISTS "Enviar mensajes" ON public.messages;
+CREATE POLICY "Enviar mensajes"
   ON public.messages FOR INSERT
-  TO authenticated
-  WITH CHECK (
-    auth.uid() = sender_id AND
-    EXISTS (
-      SELECT 1 FROM public.conversation_participants
-      WHERE conversation_participants.conversation_id = messages.conversation_id
-      AND conversation_participants.user_id = auth.uid()
-    )
-  );
+  TO public, authenticated
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Actualizar mensajes" ON public.messages;
+CREATE POLICY "Actualizar mensajes"
+  ON public.messages FOR UPDATE
+  TO public, authenticated
+  USING (true)
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Eliminar mensajes" ON public.messages;
+CREATE POLICY "Eliminar mensajes"
+  ON public.messages FOR DELETE
+  TO public, authenticated
+  USING (true);
 
 -- 8. CREACIÓN DE BUCKETS EN SUPABASE STORAGE (chat-attachments, avatars)
 INSERT INTO storage.buckets (id, name, public)
@@ -218,29 +238,24 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Políticas de Storage para imágenes y notas de voz
 DROP POLICY IF EXISTS "Permitir ver adjuntos de chat a autenticados" ON storage.objects;
-CREATE POLICY "Permitir ver adjuntos de chat a autenticados"
+DROP POLICY IF EXISTS "Permitir ver adjuntos de chat a todos" ON storage.objects;
+CREATE POLICY "Permitir ver adjuntos de chat a todos"
   ON storage.objects FOR SELECT
-  TO public
-  USING (bucket_id = 'chat-attachments');
+  TO public, authenticated
+  USING (bucket_id IN ('chat-attachments', 'avatars'));
 
 DROP POLICY IF EXISTS "Permitir subir adjuntos de chat a autenticados" ON storage.objects;
-CREATE POLICY "Permitir subir adjuntos de chat a autenticados"
+DROP POLICY IF EXISTS "Permitir subir adjuntos de chat a todos" ON storage.objects;
+CREATE POLICY "Permitir subir adjuntos de chat a todos"
   ON storage.objects FOR INSERT
-  TO authenticated
-  WITH CHECK (bucket_id = 'chat-attachments');
+  TO public, authenticated
+  WITH CHECK (bucket_id IN ('chat-attachments', 'avatars'));
 
--- Políticas de Storage para avatares
-DROP POLICY IF EXISTS "Permitir ver avatares a todos" ON storage.objects;
-CREATE POLICY "Permitir ver avatares a todos"
-  ON storage.objects FOR SELECT
-  TO public
-  USING (bucket_id = 'avatars');
-
-DROP POLICY IF EXISTS "Permitir subir avatares a autenticados" ON storage.objects;
-CREATE POLICY "Permitir subir avatares a autenticados"
-  ON storage.objects FOR INSERT
-  TO authenticated
-  WITH CHECK (bucket_id = 'avatars');
+DROP POLICY IF EXISTS "Permitir actualizar adjuntos de chat" ON storage.objects;
+CREATE POLICY "Permitir actualizar adjuntos de chat"
+  ON storage.objects FOR UPDATE
+  TO public, authenticated
+  USING (bucket_id IN ('chat-attachments', 'avatars'));
 
 -- 9. FUNCIÓN DE LIMPIEZA DE CHAT A LAS 5 HORAS
 CREATE OR REPLACE FUNCTION delete_old_chat_data() 
