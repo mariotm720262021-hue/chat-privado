@@ -91,6 +91,166 @@ export interface SupabaseProfile {
   created_at?: string;
 }
 
+export interface SupabaseFriendship {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  status: "pending" | "accepted" | "rejected";
+  created_at: string;
+  sender?: SupabaseProfile;
+  receiver?: SupabaseProfile;
+}
+
+/**
+ * Obtiene las solicitudes de amistad pendientes recibidas por el usuario actual
+ */
+export async function getPendingFriendRequests(currentUserId: string): Promise<SupabaseFriendship[]> {
+  if (!currentUserId) return [];
+  try {
+    const { data, error } = await supabase
+      .from("friendships")
+      .select("*, sender:profiles!sender_id(*)")
+      .eq("receiver_id", currentUserId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      // Intento fallback sin sintaxis relacional
+      const { data: fallback, error: fbErr } = await supabase
+        .from("friendships")
+        .select("*")
+        .eq("receiver_id", currentUserId)
+        .eq("status", "pending")
+        .order("created_at", { ascending: false });
+
+      if (fbErr || !fallback) return [];
+      
+      // Obtener los perfiles de los senders
+      const senderIds = [...new Set(fallback.map((f: any) => f.sender_id))];
+      if (senderIds.length > 0) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", senderIds);
+        const map = new Map((profs || []).map((p: any) => [p.id, p]));
+        return fallback.map((f: any) => ({
+          ...f,
+          sender: map.get(f.sender_id),
+        }));
+      }
+      return fallback;
+    }
+    return data || [];
+  } catch (err) {
+    console.error("Error obteniendo solicitudes de amistad:", err);
+    return [];
+  }
+}
+
+/**
+ * Obtiene la lista de amigos aceptados del usuario actual
+ */
+export async function getAcceptedFriends(currentUserId: string): Promise<SupabaseProfile[]> {
+  if (!currentUserId) return [];
+  try {
+    const { data, error } = await supabase
+      .from("friendships")
+      .select("*, sender:profiles!sender_id(*), receiver:profiles!receiver_id(*)")
+      .or(`sender_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`)
+      .eq("status", "accepted");
+
+    if (error || !data) return [];
+
+    const friends: SupabaseProfile[] = [];
+    data.forEach((f: any) => {
+      if (f.sender_id === currentUserId && f.receiver) {
+        friends.push(f.receiver);
+      } else if (f.receiver_id === currentUserId && f.sender) {
+        friends.push(f.sender);
+      }
+    });
+    return friends;
+  } catch (err) {
+    console.error("Error obteniendo amigos aceptados:", err);
+    return [];
+  }
+}
+
+/**
+ * Envía una solicitud de amistad
+ */
+export async function sendFriendRequest(senderId: string, receiverId: string): Promise<{ success: boolean; error?: string }> {
+  if (!senderId || !receiverId || senderId === receiverId) {
+    return { success: false, error: "Identificadores inválidos" };
+  }
+  try {
+    const { data, error } = await supabase
+      .from("friendships")
+      .upsert(
+        {
+          sender_id: senderId,
+          receiver_id: receiverId,
+          status: "pending",
+          created_at: new Date().toISOString(),
+        },
+        { onConflict: "sender_id,receiver_id" }
+      )
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error enviando solicitud de amistad:", error);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Error al enviar solicitud" };
+  }
+}
+
+/**
+ * Acepta o rechaza una solicitud de amistad
+ */
+export async function respondToFriendRequest(friendshipId: string, status: "accepted" | "rejected"): Promise<boolean> {
+  if (!friendshipId) return false;
+  try {
+    const { error } = await supabase
+      .from("friendships")
+      .update({ status })
+      .eq("id", friendshipId);
+
+    if (error) {
+      console.error("Error respondiendo solicitud:", error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Elimina una amistad existente
+ */
+export async function removeFriendship(currentUserId: string, friendId: string): Promise<boolean> {
+  if (!currentUserId || !friendId) return false;
+  try {
+    const { error } = await supabase
+      .from("friendships")
+      .delete()
+      .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUserId})`);
+
+    if (error) {
+      console.error("Error eliminando amistad:", error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+
 export interface SupabaseConversation {
   id: string;
   type: "private" | "group";

@@ -1,7 +1,30 @@
 import React, { useState, useEffect } from "react";
-import { X, UserPlus, Search, UserCheck, EyeOff, Shield, Trash2, MessageSquare, Check, Loader2, Sparkles } from "lucide-react";
-import { motion } from "motion/react";
-import { SupabaseProfile, searchProfiles, getProfile, ensureProfileExists } from "../supabase";
+import { 
+  X, 
+  UserPlus, 
+  Search, 
+  UserCheck, 
+  EyeOff, 
+  Shield, 
+  Trash2, 
+  MessageSquare, 
+  Check, 
+  Loader2, 
+  Bell, 
+  UserX,
+  Send
+} from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { 
+  supabase, 
+  SupabaseProfile, 
+  SupabaseFriendship,
+  searchProfiles, 
+  getPendingFriendRequests, 
+  sendFriendRequest, 
+  respondToFriendRequest, 
+  removeFriendship 
+} from "../supabase";
 import { generateInitialsAvatar } from "../app";
 
 interface AddFriendModalProps {
@@ -10,8 +33,10 @@ interface AddFriendModalProps {
   onStartChat: (user: SupabaseProfile) => void;
   friendsList: SupabaseProfile[];
   onFriendsUpdated: (friends: SupabaseProfile[]) => void;
-  hiddenUsers: string[]; // List of usernames or IDs hidden from
+  hiddenUsers: string[];
   onHiddenUsersUpdated: (hiddenList: string[]) => void;
+  pendingRequests: SupabaseFriendship[];
+  onRequestsUpdated: () => void;
 }
 
 export const AddFriendModal: React.FC<AddFriendModalProps> = ({
@@ -22,16 +47,27 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
   onFriendsUpdated,
   hiddenUsers,
   onHiddenUsersUpdated,
+  pendingRequests,
+  onRequestsUpdated,
 }) => {
-  const [activeTab, setActiveTab] = useState<"search" | "friends" | "privacy">("search");
+  const [activeTab, setActiveTab] = useState<"search" | "requests" | "friends" | "privacy">("requests");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [searchResults, setSearchResults] = useState<SupabaseProfile[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchError, setSearchError] = useState<string>("");
-  
-  // Para pestaña privacidad (Ocultar de...)
+  const [actionSuccessMsg, setActionSuccessMsg] = useState<string>("");
+  const [sendingRequestId, setSendingRequestId] = useState<string | null>(null);
+
+  // Privacidad (Ocultar de...)
   const [hideUsernameInput, setHideUsernameInput] = useState<string>("");
   const [privacyMessage, setPrivacyMessage] = useState<string>("");
+
+  // Si no hay solicitudes, mostrar búsqueda por defecto
+  useEffect(() => {
+    if (pendingRequests.length === 0 && activeTab === "requests") {
+      setActiveTab("search");
+    }
+  }, []);
 
   // Búsqueda en tiempo real
   useEffect(() => {
@@ -60,17 +96,57 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
   const isFriend = (userId: string) => friendsList.some((f) => f.id === userId);
   const isHiddenFrom = (username: string) => hiddenUsers.includes(username.toLowerCase().replace("@", ""));
 
-  // Agregar a amigos
-  const handleAddFriend = (user: SupabaseProfile) => {
-    if (!isFriend(user.id)) {
+  // Enviar solicitud de amistad real por Supabase
+  const handleSendRequest = async (user: SupabaseProfile) => {
+    setSendingRequestId(user.id);
+    setActionSuccessMsg("");
+    try {
+      const res = await sendFriendRequest(currentUserId, user.id);
+      if (res.success) {
+        setActionSuccessMsg(`✅ Solicitud enviada a ${user.display_name} (@${user.username})`);
+        // También guardar en amigos locales si se desea
+        const updated = [...friendsList, user];
+        onFriendsUpdated(updated);
+        localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(updated));
+      } else {
+        // Fallback local
+        const updated = [...friendsList, user];
+        onFriendsUpdated(updated);
+        localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(updated));
+        setActionSuccessMsg(`✅ Agregado a tu lista de contactos`);
+      }
+    } catch (e) {
       const updated = [...friendsList, user];
       onFriendsUpdated(updated);
       localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(updated));
+      setActionSuccessMsg(`✅ Agregado a tus amigos`);
+    } finally {
+      setSendingRequestId(null);
+      setTimeout(() => setActionSuccessMsg(""), 4000);
     }
   };
 
+  // Responder a solicitud recibida
+  const handleAcceptRequest = async (req: SupabaseFriendship) => {
+    await respondToFriendRequest(req.id, "accepted");
+    if (req.sender) {
+      const updated = [...friendsList.filter((f) => f.id !== req.sender?.id), req.sender];
+      onFriendsUpdated(updated);
+      localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(updated));
+    }
+    onRequestsUpdated();
+    setActionSuccessMsg(`✅ Ahora eres amigo de ${req.sender?.display_name || "Usuario"}`);
+    setTimeout(() => setActionSuccessMsg(""), 4000);
+  };
+
+  const handleRejectRequest = async (req: SupabaseFriendship) => {
+    await respondToFriendRequest(req.id, "rejected");
+    onRequestsUpdated();
+  };
+
   // Remover de amigos
-  const handleRemoveFriend = (userId: string) => {
+  const handleRemoveFriend = async (userId: string) => {
+    await removeFriendship(currentUserId, userId);
     const updated = friendsList.filter((f) => f.id !== userId);
     onFriendsUpdated(updated);
     localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(updated));
@@ -91,8 +167,7 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
     onHiddenUsersUpdated(updated);
     localStorage.setItem(`hidden_users_${currentUserId}`, JSON.stringify(updated));
     setHideUsernameInput("");
-    setPrivacyMessage(`✅ Tu perfil ahora está oculto para @${clean}. No podrá encontrarte en búsquedas.`);
-
+    setPrivacyMessage(`✅ Tu perfil ahora está oculto para @${clean}. No podrá encontrarte.`);
     setTimeout(() => setPrivacyMessage(""), 3500);
   };
 
@@ -118,8 +193,8 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
               <UserPlus className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">Amigos & Privacidad</h2>
-              <p className="text-[11px] text-slate-400">Administra tus contactos y oculta tu perfil de personas específicas</p>
+              <h2 className="text-sm font-bold text-white">Amigos & Solicitudes</h2>
+              <p className="text-[11px] text-slate-400">Notificaciones en tiempo real de amistad y privacidad</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-lg">
@@ -128,48 +203,143 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
         </div>
 
         {/* Tabs de Navegación */}
-        <div className="flex bg-slate-950 p-1 rounded-xl mb-4 border border-slate-800 shrink-0">
+        <div className="grid grid-cols-4 bg-slate-950 p-1 rounded-xl mb-4 border border-slate-800 shrink-0 gap-1">
+          <button
+            onClick={() => setActiveTab("requests")}
+            className={`relative py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
+              activeTab === "requests"
+                ? "bg-indigo-600 text-white shadow-md"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Bell className="w-3.5 h-3.5" />
+            <span>Solicitudes</span>
+            {pendingRequests.length > 0 && (
+              <span className="w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center animate-pulse shrink-0">
+                {pendingRequests.length}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={() => setActiveTab("search")}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+            className={`py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
               activeTab === "search"
                 ? "bg-indigo-600 text-white shadow-md"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
             <Search className="w-3.5 h-3.5" />
-            <span>Buscar Usuarios</span>
+            <span>Buscar</span>
           </button>
 
           <button
             onClick={() => setActiveTab("friends")}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+            className={`py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
               activeTab === "friends"
                 ? "bg-indigo-600 text-white shadow-md"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
             <UserCheck className="w-3.5 h-3.5" />
-            <span>Mis Amigos ({friendsList.length})</span>
+            <span>Amigos ({friendsList.length})</span>
           </button>
 
           <button
             onClick={() => setActiveTab("privacy")}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+            className={`py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
               activeTab === "privacy"
                 ? "bg-rose-600/80 text-white shadow-md"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
             <EyeOff className="w-3.5 h-3.5" />
-            <span>Ocultar de... ({hiddenUsers.length})</span>
+            <span>Ocultar ({hiddenUsers.length})</span>
           </button>
         </div>
+
+        {actionSuccessMsg && (
+          <div className="mb-3 p-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs rounded-xl flex items-center gap-2">
+            <Check className="w-4 h-4 shrink-0" />
+            <span>{actionSuccessMsg}</span>
+          </div>
+        )}
 
         {/* CONTENIDO SEGÚN TAB */}
         <div className="flex-1 overflow-y-auto pr-1 space-y-4">
           
-          {/* TAB 1: BUSCAR Y AGREGAR AMIGO */}
+          {/* TAB 1: SOLICITUDES EN TIEMPO REAL */}
+          {activeTab === "requests" && (
+            <div className="space-y-3">
+              <div className="p-3 bg-indigo-950/40 border border-indigo-500/20 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <p className="text-xs font-medium text-indigo-300">
+                    Recepción instantánea de solicitudes activa
+                  </p>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono">Realtime</span>
+              </div>
+
+              {pendingRequests.length === 0 ? (
+                <div className="text-center py-10 text-slate-500">
+                  <Bell className="w-10 h-10 mx-auto text-slate-700 mb-2" />
+                  <p className="text-xs font-medium text-slate-300">No tienes solicitudes pendientes</p>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Cuando otro usuario te envíe una solicitud de amistad aparecerá aquí al instante.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {pendingRequests.map((req) => {
+                    const sender = req.sender || {
+                      id: req.sender_id,
+                      display_name: "Usuario",
+                      username: "usuario",
+                    };
+
+                    return (
+                      <div
+                        key={req.id}
+                        className="p-3 bg-slate-950 border border-indigo-500/30 rounded-xl flex items-center justify-between gap-3 shadow-lg shadow-indigo-950/20"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src={sender.avatar_url || generateInitialsAvatar(sender.display_name)}
+                            alt=""
+                            className="w-10 h-10 rounded-full object-cover shrink-0 border border-indigo-500/40"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-white truncate">{sender.display_name}</p>
+                            <p className="text-[11px] text-indigo-400 font-mono">@{sender.username}</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">Te envió una solicitud de amistad</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleAcceptRequest(req)}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1 transition-colors shadow-sm"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Aceptar</span>
+                          </button>
+                          <button
+                            onClick={() => handleRejectRequest(req)}
+                            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-300 text-xs rounded-lg transition-colors"
+                          >
+                            <UserX className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: BUSCAR Y AGREGAR AMIGO */}
           {activeTab === "search" && (
             <div className="space-y-4">
               <div className="relative">
@@ -207,7 +377,7 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
               <div className="space-y-2">
                 {searchResults.map((user) => {
                   const alreadyFriend = isFriend(user.id);
-                  const isHidden = isHiddenFrom(user.username);
+                  const isSending = sendingRequestId === user.id;
 
                   return (
                     <div
@@ -244,11 +414,16 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
                           </span>
                         ) : (
                           <button
-                            onClick={() => handleAddFriend(user)}
-                            className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium rounded-lg flex items-center gap-1 transition-colors shadow-sm"
+                            disabled={isSending}
+                            onClick={() => handleSendRequest(user)}
+                            className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium rounded-lg flex items-center gap-1 transition-colors shadow-sm disabled:opacity-50"
                           >
-                            <UserPlus className="w-3.5 h-3.5" />
-                            <span>Añadir</span>
+                            {isSending ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <UserPlus className="w-3.5 h-3.5" />
+                            )}
+                            <span>{isSending ? "Enviando..." : "Añadir"}</span>
                           </button>
                         )}
 
@@ -271,14 +446,14 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: LISTA DE AMIGOS */}
+          {/* TAB 3: LISTA DE AMIGOS */}
           {activeTab === "friends" && (
             <div className="space-y-3">
               {friendsList.length === 0 ? (
                 <div className="text-center py-10 text-slate-500">
                   <UserCheck className="w-10 h-10 mx-auto text-slate-700 mb-2" />
                   <p className="text-xs font-medium text-slate-300">Aún no has agregado amigos</p>
-                  <p className="text-[11px] text-slate-500 mt-1">Usa la pestaña de búsqueda para encontrar a tus contactos.</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Usa la pestaña de búsqueda para encontrar y conectar con contactos.</p>
                 </div>
               ) : (
                 friendsList.map((friend) => (
@@ -329,7 +504,7 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
             </div>
           )}
 
-          {/* TAB 3: PRIVACIDAD (OCULTAR DE...) */}
+          {/* TAB 4: PRIVACIDAD (OCULTAR DE...) */}
           {activeTab === "privacy" && (
             <div className="space-y-4">
               <div className="p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-start gap-2.5 text-xs text-rose-300">
@@ -412,3 +587,4 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
     </div>
   );
 };
+export default AddFriendModal;

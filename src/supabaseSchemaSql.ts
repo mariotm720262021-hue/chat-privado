@@ -95,6 +95,19 @@ ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent';
 -- Index para ordenamiento y consultas por conversación
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON public.messages(conversation_id, created_at);
 
+-- 5.1. TABLA DE SOLICITUDES DE AMISTAD (friendships)
+CREATE TABLE IF NOT EXISTS public.friendships (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sender_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  receiver_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  status TEXT CHECK (status IN ('pending', 'accepted', 'rejected')) DEFAULT 'pending',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(sender_id, receiver_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_friendships_receiver ON public.friendships(receiver_id, status);
+CREATE INDEX IF NOT EXISTS idx_friendships_sender ON public.friendships(sender_id, status);
+
 -- 6. PUBLICACIÓN PARA TIEMPO REAL (Supabase Realtime)
 -- Permite recibir alertas en vivo cuando se insertan o actualizan registros
 DO $$
@@ -104,6 +117,13 @@ BEGIN
     WHERE pubname = 'supabase_realtime' AND tablename = 'messages'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND tablename = 'friendships'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.friendships;
   END IF;
 
   IF NOT EXISTS (
@@ -133,6 +153,24 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversation_participants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
+
+-- ========================================================
+-- POLÍTICAS RLS: FRIENDSHIPS
+-- ========================================================
+DROP POLICY IF EXISTS "Ver amistades" ON public.friendships;
+CREATE POLICY "Ver amistades"
+  ON public.friendships FOR SELECT
+  TO public, authenticated
+  USING (true);
+
+DROP POLICY IF EXISTS "Crear y gestionar amistades" ON public.friendships;
+CREATE POLICY "Crear y gestionar amistades"
+  ON public.friendships FOR ALL
+  TO public, authenticated
+  USING (true)
+  WITH CHECK (true);
+
 
 -- ========================================================
 -- POLÍTICAS RLS: PROFILES

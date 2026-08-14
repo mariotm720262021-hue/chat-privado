@@ -77,13 +77,16 @@ import {
   getConversationMessages, 
   markMessagesAsRead,
   subscribeToMessages,
+  getPendingFriendRequests,
+  getAcceptedFriends,
   updateSupabaseCredentials,
   resetSupabaseCredentials,
   supabaseUrl,
   supabaseKey,
   SupabaseProfile,
   SupabaseConversation,
-  SupabaseMessage
+  SupabaseMessage,
+  SupabaseFriendship
 } from "./supabase";
 
 import { SUPABASE_SQL_SCRIPT } from "./supabaseSchemaSql";
@@ -169,6 +172,82 @@ export default function App() {
   // Listas de Amigos y Privacidad (Ocultar de...)
   const [friendsList, setFriendsList] = useState<SupabaseProfile[]>([]);
   const [hiddenUsers, setHiddenUsers] = useState<string[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<SupabaseFriendship[]>([]);
+
+  // Función para cargar solicitudes de amistad recibidas
+  const fetchRequests = async () => {
+    if (!currentUser?.id) return;
+    try {
+      const reqs = await getPendingFriendRequests(currentUser.id);
+      setPendingRequests(reqs);
+      const friends = await getAcceptedFriends(currentUser.id);
+      if (friends.length > 0) {
+        setFriendsList(friends);
+        localStorage.setItem(`friends_${currentUser.id}`, JSON.stringify(friends));
+      }
+    } catch (err) {
+      console.warn("Error cargando solicitudes de amistad:", err);
+    }
+  };
+
+  // Suscripción en tiempo real a la tabla 'friendships' de Supabase
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    // Cargar solicitudes existentes
+    fetchRequests();
+
+    // Suscripción en tiempo real a la tabla 'friendships'
+    const channel = supabase
+      .channel(`realtime-friendships-${currentUser.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'friendships',
+          filter: `receiver_id=eq.${currentUser.id}`,
+        },
+        (payload) => {
+          console.log('🔔 Solicitud recibida:', payload);
+          fetchRequests(); // Recargar la lista automáticamente
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'friendships',
+          filter: `receiver_id=eq.${currentUser.id}`,
+        },
+        (payload) => {
+          console.log('🔔 Solicitud actualizada:', payload);
+          fetchRequests();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'friendships',
+          filter: `sender_id=eq.${currentUser.id}`,
+        },
+        (payload) => {
+          console.log('🔔 Tu solicitud de amistad fue aceptada/actualizada:', payload);
+          fetchRequests();
+        }
+      )
+      .subscribe((status) => {
+        console.log('Estado de conexión Realtime:', status);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUser?.id]);
+
 
   // Lista de Chats y Búsqueda
   const [chats, setChats] = useState<any[]>([]);
@@ -979,10 +1058,15 @@ export default function App() {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setShowAddFriendModal(true)}
-                  title="Agregar Amigo / Mis Amigos / Privacidad"
-                  className="p-2 text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 rounded-xl transition-colors backdrop-blur-sm border border-indigo-400/30"
+                  title="Agregar Amigo / Solicitudes / Privacidad"
+                  className="relative p-2 text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 rounded-xl transition-colors backdrop-blur-sm border border-indigo-400/30"
                 >
                   <UserPlus className="w-4 h-4" />
+                  {pendingRequests.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center animate-bounce shadow-md">
+                      {pendingRequests.length}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
@@ -1018,11 +1102,16 @@ export default function App() {
               <div className="mt-2.5 grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setShowAddFriendModal(true)}
-                  className="py-2 px-2.5 bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors shadow-sm backdrop-blur-sm"
-                  title="Agregar nuevo amigo y privacidad"
+                  className="relative py-2 px-2.5 bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors shadow-sm backdrop-blur-sm"
+                  title="Agregar nuevo amigo y solicitudes"
                 >
                   <UserPlus className="w-3.5 h-3.5 text-indigo-300" />
                   <span className="truncate">Amigos</span>
+                  {pendingRequests.length > 0 && (
+                    <span className="ml-1 px-1.5 py-0.2 bg-rose-500 text-white text-[9px] font-bold rounded-full animate-pulse">
+                      {pendingRequests.length}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
@@ -1679,6 +1768,8 @@ export default function App() {
           onFriendsUpdated={(updated) => setFriendsList(updated)}
           hiddenUsers={hiddenUsers}
           onHiddenUsersUpdated={(updated) => setHiddenUsers(updated)}
+          pendingRequests={pendingRequests}
+          onRequestsUpdated={fetchRequests}
           onClose={() => setShowAddFriendModal(false)}
           onStartChat={(user) => {
             handleStartChatWithUser(user);
