@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from "react";
-import Hls from "hls.js";
 import { Play, Pause, Volume2, VolumeX, Maximize2, Radio, Tv, AlertCircle, RefreshCw } from "lucide-react";
 
 interface IPTVPlayerProps {
@@ -8,6 +7,43 @@ interface IPTVPlayerProps {
   isLive?: boolean;
   autoPlay?: boolean;
   className?: string;
+}
+
+// Carga Hls.js de forma dinámica y bajo demanda desde CDN sin requerir bundling local
+function loadHlsLibrary(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      return reject(new Error("Window no disponible"));
+    }
+
+    // Si ya está cargado globalmente en window
+    if ((window as any).Hls) {
+      return resolve((window as any).Hls);
+    }
+
+    const existingScript = document.getElementById("hls-script-loader");
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve((window as any).Hls));
+      existingScript.addEventListener("error", () => reject(new Error("Error al cargar script Hls")));
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.id = "hls-script-loader";
+    script.src = "https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js";
+    script.async = true;
+    script.onload = () => {
+      if ((window as any).Hls) {
+        resolve((window as any).Hls);
+      } else {
+        reject(new Error("Hls no se inicializó correctamente"));
+      }
+    };
+    script.onerror = () => {
+      reject(new Error("No se pudo cargar la librería HLS desde CDN"));
+    };
+    document.head.appendChild(script);
+  });
 }
 
 export const IPTVPlayer: React.FC<IPTVPlayerProps> = ({
@@ -24,90 +60,112 @@ export const IPTVPlayer: React.FC<IPTVPlayerProps> = ({
   const [volume, setVolume] = useState<number>(1);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isHlsSupported, setIsHlsSupported] = useState<boolean>(true);
-  const hlsRef = useRef<Hls | null>(null);
+  const hlsInstanceRef = useRef<any>(null);
 
   const isAudioOnly = /\.(mp3|aac|ogg|wav)(\?|$)/i.test(src);
   const isHlsStream = /\.(m3u8)(\?|$)/i.test(src) || src.includes(".m3u8") || isLive;
 
-  const initPlayer = () => {
+  const destroyHls = () => {
+    if (hlsInstanceRef.current) {
+      try {
+        hlsInstanceRef.current.destroy();
+      } catch (e) {
+        console.warn("Error destruyendo HLS:", e);
+      }
+      hlsInstanceRef.current = null;
+    }
+  };
+
+  const initPlayer = async () => {
     const video = videoRef.current;
     if (!video || !src) return;
 
     setError(null);
     setIsLoading(true);
+    destroyHls();
 
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-
-    // Comprobar soporte de HLS
-    if (isHlsStream && Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        backBufferLength: 90,
-      });
-
-      hlsRef.current = hls;
-      hls.loadSource(src);
-      hls.attachMedia(video);
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setIsLoading(false);
-        if (autoPlay) {
-          video.play().catch(() => setIsPlaying(false));
-        }
-      });
-
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              setError("Error de red al cargar el stream IPTV. Reintentando...");
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              setError("Error de códec o medio en el stream. Recuperando...");
-              hls.recoverMediaError();
-              break;
-            default:
-              setError("No se pudo reproducir este stream IPTV/HLS.");
-              hls.destroy();
-              break;
-          }
-        }
-      });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl") || !isHlsStream) {
-      // Soporte nativo de Safari/iOS o vídeo/audio directo MP4/MP3
+    // 1. Si el navegador soporta HLS de forma nativa (como Safari en macOS / iOS)
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = src;
-      video.addEventListener("loadedmetadata", () => {
+      video.onloadedmetadata = () => {
         setIsLoading(false);
         if (autoPlay) {
           video.play().catch(() => setIsPlaying(false));
         }
-      });
-
-      video.addEventListener("error", () => {
-        setError("Error al reproducir el flujo multimedia o IPTV.");
+      };
+      video.onerror = () => {
+        setError("Error al reproducir el flujo multimedia o canal IPTV.");
         setIsLoading(false);
-      });
-    } else {
-      setIsHlsSupported(false);
-      setError("Tu navegador no soporta reproducción HLS/IPTV directamente.");
-      setIsLoading(false);
+      };
+      return;
     }
+
+    // 2. Si es flujo HLS (.m3u8) en navegadores como Chrome, Firefox, Edge
+    if (isHlsStream) {
+      try {
+        const HlsClass = await loadHlsLibrary();
+        if (HlsClass && HlsClass.isSupported()) {
+          const hls = new HlsClass({
+            enableWorker: true,
+            lowLatencyMode: true,
+            backBufferLength: 90,
+          });
+
+          hlsInstanceRef.current = hls;
+          hls.loadSource(src);
+          hls.attachMedia(video);
+
+          hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
+            setIsLoading(false);
+            if (autoPlay) {
+              video.play().catch(() => setIsPlaying(false));
+            }
+          });
+
+          hls.on(HlsClass.Events.ERROR, (_event: any, data: any) => {
+            if (data && data.fatal) {
+              switch (data.type) {
+                case HlsClass.ErrorTypes.NETWORK_ERROR:
+                  setError("Error de red al sintonizar stream IPTV. Reintentando...");
+                  hls.startLoad();
+                  break;
+                case HlsClass.ErrorTypes.MEDIA_ERROR:
+                  setError("Recuperando error de códec o medio en el stream...");
+                  hls.recoverMediaError();
+                  break;
+                default:
+                  setError("No se pudo reproducir este stream IPTV/HLS.");
+                  destroyHls();
+                  break;
+              }
+            }
+          });
+          return;
+        }
+      } catch (err: any) {
+        console.warn("Fallo cargando HLS dinámicamente:", err);
+      }
+    }
+
+    // 3. Reproducción directa estándar para MP4 / WebM / MP3 directo
+    video.src = src;
+    video.onloadedmetadata = () => {
+      setIsLoading(false);
+      if (autoPlay) {
+        video.play().catch(() => setIsPlaying(false));
+      }
+    };
+    video.onerror = () => {
+      setError("Error al reproducir el stream o archivo multimedia.");
+      setIsLoading(false);
+    };
   };
 
   useEffect(() => {
     initPlayer();
 
     return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
+      destroyHls();
     };
   }, [src]);
 
