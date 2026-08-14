@@ -29,6 +29,7 @@ import { generateInitialsAvatar } from "../app";
 
 interface AddFriendModalProps {
   currentUserId: string;
+  currentUserProfile?: SupabaseProfile | null;
   onClose: () => void;
   onStartChat: (user: SupabaseProfile) => void;
   friendsList: SupabaseProfile[];
@@ -41,6 +42,7 @@ interface AddFriendModalProps {
 
 export const AddFriendModal: React.FC<AddFriendModalProps> = ({
   currentUserId,
+  currentUserProfile,
   onClose,
   onStartChat,
   friendsList,
@@ -101,22 +103,21 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
     setSendingRequestId(user.id);
     setActionSuccessMsg("");
     try {
-      const res = await sendFriendRequest(currentUserId, user.id);
+      const res = await sendFriendRequest(currentUserId, user.id, currentUserProfile || undefined);
       if (res.success) {
         setActionSuccessMsg(`✅ Solicitud enviada a ${user.display_name} (@${user.username})`);
-        // También guardar en amigos locales si se desea
-        const updated = [...friendsList, user];
+        const updated = [...friendsList.filter((f) => f.id !== user.id), user];
         onFriendsUpdated(updated);
         localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(updated));
       } else {
         // Fallback local
-        const updated = [...friendsList, user];
+        const updated = [...friendsList.filter((f) => f.id !== user.id), user];
         onFriendsUpdated(updated);
         localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(updated));
         setActionSuccessMsg(`✅ Agregado a tu lista de contactos`);
       }
     } catch (e) {
-      const updated = [...friendsList, user];
+      const updated = [...friendsList.filter((f) => f.id !== user.id), user];
       onFriendsUpdated(updated);
       localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(updated));
       setActionSuccessMsg(`✅ Agregado a tus amigos`);
@@ -128,7 +129,7 @@ export const AddFriendModal: React.FC<AddFriendModalProps> = ({
 
   // Responder a solicitud recibida
   const handleAcceptRequest = async (req: SupabaseFriendship) => {
-    await respondToFriendRequest(req.id, "accepted");
+    await respondToFriendRequest(req.id, "accepted", req.sender_id);
     if (req.sender) {
       const updated = [...friendsList.filter((f) => f.id !== req.sender?.id), req.sender];
       onFriendsUpdated(updated);

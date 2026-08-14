@@ -177,33 +177,75 @@ export async function getAcceptedFriends(currentUserId: string): Promise<Supabas
 }
 
 /**
- * Envía una solicitud de amistad
+ * Envía una solicitud de amistad por Supabase y emite evento en tiempo real
  */
-export async function sendFriendRequest(senderId: string, receiverId: string): Promise<{ success: boolean; error?: string }> {
+export async function sendFriendRequest(senderId: string, receiverId: string, senderProfile?: SupabaseProfile): Promise<{ success: boolean; error?: string }> {
   if (!senderId || !receiverId || senderId === receiverId) {
     return { success: false, error: "Identificadores inválidos" };
   }
   try {
-    const { data, error } = await supabase
+    // 1. Verificar si ya existe registro
+    const { data: existing, error: findErr } = await supabase
       .from("friendships")
-      .upsert(
-        {
+      .select("*")
+      .or(`and(sender_id.eq.${senderId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${senderId})`)
+      .maybeSingle();
+
+    let insertError = null;
+    if (existing) {
+      if (existing.status === "accepted") {
+        return { success: true, error: "Ya son amigos" };
+      }
+      const { error: updErr } = await supabase
+        .from("friendships")
+        .update({
           sender_id: senderId,
           receiver_id: receiverId,
           status: "pending",
           created_at: new Date().toISOString(),
-        },
-        { onConflict: "sender_id,receiver_id" }
-      )
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Error enviando solicitud de amistad:", error);
-      return { success: false, error: error.message };
+        })
+        .eq("id", existing.id);
+      insertError = updErr;
+    } else {
+      const { error: insErr } = await supabase
+        .from("friendships")
+        .insert({
+          sender_id: senderId,
+          receiver_id: receiverId,
+          status: "pending",
+        });
+      insertError = insErr;
     }
+
+    if (insertError) {
+      console.warn("Advertencia en tabla friendships:", insertError.message);
+    }
+
+    // 2. Emitir evento Realtime Broadcast directo al canal del receptor
+    try {
+      const directChannel = supabase.channel(`realtime-friendships-${receiverId}`);
+      directChannel.subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          directChannel.send({
+            type: "broadcast",
+            event: "friend_request",
+            payload: {
+              sender_id: senderId,
+              receiver_id: receiverId,
+              sender: senderProfile,
+              status: "pending",
+              created_at: new Date().toISOString(),
+            },
+          });
+        }
+      });
+    } catch (realtimeErr) {
+      console.warn("Broadcast realtime channel notice:", realtimeErr);
+    }
+
     return { success: true };
   } catch (err: any) {
+    console.error("Error al enviar solicitud de amistad:", err);
     return { success: false, error: err?.message || "Error al enviar solicitud" };
   }
 }
@@ -211,7 +253,7 @@ export async function sendFriendRequest(senderId: string, receiverId: string): P
 /**
  * Acepta o rechaza una solicitud de amistad
  */
-export async function respondToFriendRequest(friendshipId: string, status: "accepted" | "rejected"): Promise<boolean> {
+export async function respondToFriendRequest(friendshipId: string, status: "accepted" | "rejected", senderId?: string): Promise<boolean> {
   if (!friendshipId) return false;
   try {
     const { error } = await supabase
@@ -221,8 +263,24 @@ export async function respondToFriendRequest(friendshipId: string, status: "acce
 
     if (error) {
       console.error("Error respondiendo solicitud:", error);
-      return false;
     }
+
+    // Notificar al sender si fue aceptada
+    if (senderId) {
+      try {
+        const senderChannel = supabase.channel(`realtime-friendships-${senderId}`);
+        senderChannel.subscribe((st) => {
+          if (st === "SUBSCRIBED") {
+            senderChannel.send({
+              type: "broadcast",
+              event: "friend_request_response",
+              payload: { friendshipId, status },
+            });
+          }
+        });
+      } catch (e) {}
+    }
+
     return true;
   } catch (err) {
     return false;

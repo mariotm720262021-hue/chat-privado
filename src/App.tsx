@@ -173,44 +173,70 @@ export default function App() {
   const [friendsList, setFriendsList] = useState<SupabaseProfile[]>([]);
   const [hiddenUsers, setHiddenUsers] = useState<string[]>([]);
   const [pendingRequests, setPendingRequests] = useState<SupabaseFriendship[]>([]);
+  const [incomingRequestToast, setIncomingRequestToast] = useState<{ senderName: string; senderUsername: string; avatarUrl?: string; id?: string } | null>(null);
+
+  const currentUserId = currentUser?.id;
+
+  // Sonido suave de notificación al recibir solicitud
+  const playFriendNotificationSound = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+    } catch (e) {}
+  };
 
   // Función para cargar solicitudes de amistad recibidas
   const fetchRequests = async () => {
-    if (!currentUser?.id) return;
+    if (!currentUserId) return;
     try {
-      const reqs = await getPendingFriendRequests(currentUser.id);
+      const reqs = await getPendingFriendRequests(currentUserId);
       setPendingRequests(reqs);
-      const friends = await getAcceptedFriends(currentUser.id);
-      if (friends.length > 0) {
+      const friends = await getAcceptedFriends(currentUserId);
+      if (friends && friends.length > 0) {
         setFriendsList(friends);
-        localStorage.setItem(`friends_${currentUser.id}`, JSON.stringify(friends));
+        localStorage.setItem(`friends_${currentUserId}`, JSON.stringify(friends));
       }
     } catch (err) {
       console.warn("Error cargando solicitudes de amistad:", err);
     }
   };
 
-  // Suscripción en tiempo real a la tabla 'friendships' de Supabase
+  // Suscripción en tiempo real (Supabase Realtime) a la tabla 'friendships'
   useEffect(() => {
-    if (!currentUser?.id) return;
+    if (!currentUserId) return;
 
     // Cargar solicitudes existentes
     fetchRequests();
 
     // Suscripción en tiempo real a la tabla 'friendships'
     const channel = supabase
-      .channel(`realtime-friendships-${currentUser.id}`)
+      .channel(`realtime-friendships-${currentUserId}`)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'friendships',
-          filter: `receiver_id=eq.${currentUser.id}`,
+          filter: `receiver_id=eq.${currentUserId}`,
         },
         (payload) => {
           console.log('🔔 Solicitud recibida:', payload);
           fetchRequests(); // Recargar la lista automáticamente
+          playFriendNotificationSound();
+          setIncomingRequestToast({
+            senderName: "Nuevo contacto",
+            senderUsername: "amigo",
+          });
         }
       )
       .on(
@@ -219,7 +245,7 @@ export default function App() {
           event: 'UPDATE',
           schema: 'public',
           table: 'friendships',
-          filter: `receiver_id=eq.${currentUser.id}`,
+          filter: `receiver_id=eq.${currentUserId}`,
         },
         (payload) => {
           console.log('🔔 Solicitud actualizada:', payload);
@@ -232,21 +258,46 @@ export default function App() {
           event: 'UPDATE',
           schema: 'public',
           table: 'friendships',
-          filter: `sender_id=eq.${currentUser.id}`,
+          filter: `sender_id=eq.${currentUserId}`,
         },
         (payload) => {
           console.log('🔔 Tu solicitud de amistad fue aceptada/actualizada:', payload);
           fetchRequests();
         }
       )
+      .on(
+        'broadcast',
+        { event: 'friend_request' },
+        (payload) => {
+          console.log('🔔 Solicitud recibida vía Broadcast:', payload);
+          fetchRequests();
+          playFriendNotificationSound();
+          if (payload?.payload?.sender) {
+            setIncomingRequestToast({
+              senderName: payload.payload.sender.display_name,
+              senderUsername: payload.payload.sender.username,
+              avatarUrl: payload.payload.sender.avatar_url,
+            });
+          } else {
+            setIncomingRequestToast({
+              senderName: "Usuario",
+              senderUsername: "contacto",
+            });
+          }
+        }
+      )
       .subscribe((status) => {
         console.log('Estado de conexión Realtime:', status);
       });
 
+    // Sondeo de respaldo regular cada 6 segundos para garantizar sincronización
+    const syncInterval = setInterval(fetchRequests, 6000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(syncInterval);
     };
-  }, [currentUser?.id]);
+  }, [currentUserId]);
 
 
   // Lista de Chats y Búsqueda
@@ -1764,6 +1815,7 @@ export default function App() {
       {showAddFriendModal && currentUser && (
         <AddFriendModal
           currentUserId={currentUser.id}
+          currentUserProfile={userProfile}
           friendsList={friendsList}
           onFriendsUpdated={(updated) => setFriendsList(updated)}
           hiddenUsers={hiddenUsers}
@@ -1777,6 +1829,67 @@ export default function App() {
           }}
         />
       )}
+
+      {/* TOAST FLOTANTE DE NOTIFICACIÓN EN TIEMPO REAL */}
+      <AnimatePresence>
+        {incomingRequestToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -40, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            className="fixed top-5 right-5 z-[100] max-w-sm bg-slate-900/95 border border-indigo-500/50 backdrop-blur-xl p-4 rounded-2xl shadow-2xl shadow-indigo-950/60 flex items-start gap-3"
+          >
+            <div className="relative">
+              <div className="w-10 h-10 rounded-full bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-300 font-bold overflow-hidden shrink-0">
+                {incomingRequestToast.avatarUrl ? (
+                  <img src={incomingRequestToast.avatarUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <UserPlus className="w-5 h-5" />
+                )}
+              </div>
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900 animate-ping" />
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-400">
+                  🔔 Solicitud de amistad
+                </span>
+                <button
+                  onClick={() => setIncomingRequestToast(null)}
+                  className="text-slate-400 hover:text-white p-0.5 rounded-md"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-xs font-semibold text-white truncate mt-0.5">
+                {incomingRequestToast.senderName}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                Te envió una solicitud en tiempo real.
+              </p>
+
+              <div className="mt-2.5 flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setShowAddFriendModal(true);
+                    setIncomingRequestToast(null);
+                  }}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
+                >
+                  Ver Solicitud
+                </button>
+                <button
+                  onClick={() => setIncomingRequestToast(null)}
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition-colors"
+                >
+                  Descartar
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* MODAL DE COMPARTIR GRUPO */}
       {showShareGroupModal && activeChat && (
