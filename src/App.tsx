@@ -45,7 +45,14 @@ import {
   Square,
   Smile,
   Edit3,
-  Loader2
+  Loader2,
+  Share2,
+  Tv,
+  Radio,
+  Youtube,
+  Link2,
+  EyeOff,
+  UserCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -98,6 +105,11 @@ const GoogleIcon = () => (
 
 import { AudioPlayer } from "./components/AudioPlayer";
 import { ProfileModal } from "./components/ProfileModal";
+import { MediaMessageBubble } from "./components/MediaMessageBubble";
+import { MediaUrlModal } from "./components/MediaUrlModal";
+import { AddFriendModal } from "./components/AddFriendModal";
+import { ShareGroupModal } from "./components/ShareGroupModal";
+import { IPTVFloatingModal } from "./components/IPTVFloatingModal";
 import chatWallpaper from "./assets/images/chat_bg_wallpaper.jpg";
 import sidebarWallpaper from "./assets/images/space_teal_doodle.jpg";
 
@@ -146,6 +158,16 @@ export default function App() {
   const [inviteCodeInput, setInviteCodeInput] = useState<string>("");
   const [groupModalError, setGroupModalError] = useState<string>("");
   const [groupModalLoading, setGroupModalLoading] = useState<boolean>(false);
+
+  // Modales Nuevos: Amigos, Privacidad, Compartir Grupo, Multimedia e IPTV
+  const [showAddFriendModal, setShowAddFriendModal] = useState<boolean>(false);
+  const [showShareGroupModal, setShowShareGroupModal] = useState<boolean>(false);
+  const [showMediaUrlModal, setShowMediaUrlModal] = useState<boolean>(false);
+  const [showIPTVModal, setShowIPTVModal] = useState<boolean>(false);
+
+  // Listas de Amigos y Privacidad (Ocultar de...)
+  const [friendsList, setFriendsList] = useState<SupabaseProfile[]>([]);
+  const [hiddenUsers, setHiddenUsers] = useState<string[]>([]);
 
   // Lista de Chats y Búsqueda
   const [chats, setChats] = useState<any[]>([]);
@@ -311,6 +333,51 @@ export default function App() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  // Cargar lista de amigos y lista de ocultos del usuario
+  useEffect(() => {
+    if (currentUser?.id) {
+      try {
+        const savedFriends = localStorage.getItem(`friends_${currentUser.id}`);
+        if (savedFriends) setFriendsList(JSON.parse(savedFriends));
+
+        const savedHidden = localStorage.getItem(`hidden_users_${currentUser.id}`);
+        if (savedHidden) setHiddenUsers(JSON.parse(savedHidden));
+      } catch (err) {
+        console.warn("Error leyendo amigos/ocultos locales:", err);
+      }
+    }
+  }, [currentUser?.id]);
+
+  // Detector de Enlace de Invitación a Grupo por URL (?group_invite=CODE)
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const inviteCode = urlParams.get("group_invite") || urlParams.get("join_group");
+
+      if (inviteCode) {
+        joinGroupWithInviteCode(currentUser.id, inviteCode)
+          .then(async (convId) => {
+            // Limpiar el parámetro de la URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+            await reloadConversations();
+            const convs = await getUserConversations(currentUser.id);
+            const joinedChat = convs.find((c) => c.id === convId || c.invite_code === inviteCode);
+            if (joinedChat) {
+              setActiveChat(joinedChat);
+              setCurrentView("chat_room");
+            }
+          })
+          .catch((err) => {
+            console.warn("Aviso al unirse por enlace URL:", err);
+          });
+      }
+    } catch (e) {
+      console.warn("Error procesando URL de invitación:", e);
+    }
+  }, [currentUser?.id]);
 
   // 3. Cargar la Lista de Conversaciones
   const reloadConversations = async () => {
@@ -551,7 +618,7 @@ export default function App() {
     }
     setIsSearching(true);
     try {
-      const results = await searchProfiles(term, currentUser?.id);
+      const results = await searchProfiles(term, currentUser?.id, userProfile?.username);
       setSearchResults(results);
     } catch (err) {
       console.error("Error buscando perfiles:", err);
@@ -576,6 +643,29 @@ export default function App() {
     } catch (err: any) {
       console.error("Error creando chat privado:", err);
       alert(err.message || "Error creando conversación. Asegúrate de ejecutar el script SQL en Supabase.");
+    }
+  };
+
+  const handleSendMediaUrl = async (
+    url: string,
+    mediaType: "video" | "audio" | "youtube" | "iptv",
+    caption?: string
+  ) => {
+    if (!activeChat?.id || !currentUser?.id) return;
+    try {
+      const content = caption ? `${caption}\n${url}` : url;
+      await sendMessage(
+        activeChat.id,
+        currentUser.id,
+        content,
+        mediaType,
+        url,
+        selectedTTLSeconds > 0 ? selectedTTLSeconds : undefined
+      );
+      reloadConversations();
+    } catch (err: any) {
+      console.error("Error enviando enlace multimedia:", err);
+      alert(err.message || "Error enviando multimedia.");
     }
   };
 
@@ -887,6 +977,20 @@ export default function App() {
 
               <div className="flex items-center gap-1">
                 <button
+                  onClick={() => setShowAddFriendModal(true)}
+                  title="Agregar Amigo / Mis Amigos / Privacidad"
+                  className="p-2 text-indigo-300 hover:text-white bg-indigo-600/30 hover:bg-indigo-600/50 rounded-xl transition-colors backdrop-blur-sm border border-indigo-400/30"
+                >
+                  <UserPlus className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setShowIPTVModal(true)}
+                  title="Reproductor IPTV & Streaming"
+                  className="p-2 text-rose-300 hover:text-white bg-rose-600/20 hover:bg-rose-600/40 rounded-xl transition-colors backdrop-blur-sm border border-rose-500/30"
+                >
+                  <Tv className="w-4 h-4" />
+                </button>
+                <button
                   onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
                   title="Crear / Unirse a Grupo"
                   className="p-2 text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 rounded-xl transition-colors backdrop-blur-sm"
@@ -916,21 +1020,31 @@ export default function App() {
                 />
               </div>
 
-              {/* Botón de Acceso Rápido a Unirse a Grupo */}
-              <div className="mt-2.5 flex gap-2">
+              {/* Botón de Acceso Rápido: Agregar Amigo, Crear Grupo, IPTV */}
+              <div className="mt-2.5 grid grid-cols-3 gap-1.5">
                 <button
-                  onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
-                  className="flex-1 py-1.5 px-3 bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors shadow-sm backdrop-blur-sm"
+                  onClick={() => setShowAddFriendModal(true)}
+                  className="py-1.5 px-2 bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 rounded-xl text-[11px] font-semibold text-white flex items-center justify-center gap-1 transition-colors shadow-sm backdrop-blur-sm"
+                  title="Agregar nuevo amigo y privacidad"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Crear Grupo</span>
+                  <UserPlus className="w-3 h-3 text-indigo-300" />
+                  <span className="truncate">Amigos</span>
                 </button>
                 <button
-                  onClick={() => { setGroupModalMode("join"); setShowGroupModal(true); }}
-                  className="flex-1 py-1.5 px-3 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-700/70 rounded-xl text-xs font-medium text-slate-100 flex items-center justify-center gap-1.5 transition-colors backdrop-blur-sm"
+                  onClick={() => { setGroupModalMode("create"); setShowGroupModal(true); }}
+                  className="py-1.5 px-2 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-700/70 rounded-xl text-[11px] font-medium text-slate-100 flex items-center justify-center gap-1 transition-colors backdrop-blur-sm"
+                  title="Crear grupo de chat"
                 >
-                  <QrCode className="w-3.5 h-3.5" />
-                  <span>Código de Grupo</span>
+                  <Users className="w-3 h-3 text-emerald-400" />
+                  <span className="truncate">Grupo</span>
+                </button>
+                <button
+                  onClick={() => setShowIPTVModal(true)}
+                  className="py-1.5 px-2 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-700/70 rounded-xl text-[11px] font-medium text-slate-100 flex items-center justify-center gap-1 transition-colors backdrop-blur-sm"
+                  title="Reproductor IPTV y enlaces MP3/Video"
+                >
+                  <Tv className="w-3 h-3 text-rose-400" />
+                  <span className="truncate">IPTV</span>
                 </button>
               </div>
             </div>
@@ -945,22 +1059,55 @@ export default function App() {
                   {isSearching ? (
                     <p className="text-xs text-slate-400 text-center py-4">Buscando en Supabase...</p>
                   ) : searchResults.length === 0 ? (
-                    <p className="text-xs text-slate-500 text-center py-4">No se encontraron usuarios.</p>
+                    <div className="text-center py-6 px-3">
+                      <p className="text-xs text-slate-400 font-medium">No se encontraron usuarios.</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Comprueba que el @usuario esté bien escrito.</p>
+                    </div>
                   ) : (
-                    searchResults.map((user) => (
-                      <button
-                        key={user.id}
-                        onClick={() => handleStartChatWithUser(user)}
-                        className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-800/80 transition-colors text-left"
-                      >
-                        <img src={user.avatar_url || generateInitialsAvatar(user.display_name)} alt="" className="w-10 h-10 rounded-full object-cover" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-white truncate">{user.display_name}</p>
-                          <p className="text-[11px] text-indigo-400 truncate">@{user.username}</p>
+                    searchResults.map((user) => {
+                      const isAlreadyFriend = friendsList.some((f) => f.id === user.id);
+
+                      return (
+                        <div
+                          key={user.id}
+                          className="w-full flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/40 hover:bg-slate-800/80 border border-slate-800/50 transition-colors"
+                        >
+                          <button
+                            onClick={() => handleStartChatWithUser(user)}
+                            className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+                          >
+                            <img src={user.avatar_url || generateInitialsAvatar(user.display_name)} alt="" className="w-9 h-9 rounded-full object-cover shrink-0 border border-slate-700" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-semibold text-white truncate">{user.display_name}</p>
+                              <p className="text-[11px] text-indigo-400 font-mono truncate">@{user.username}</p>
+                            </div>
+                          </button>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            {!isAlreadyFriend && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const updated = [...friendsList, user];
+                                  setFriendsList(updated);
+                                  localStorage.setItem(`friends_${currentUser.id}`, JSON.stringify(updated));
+                                }}
+                                className="p-1.5 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-lg text-xs transition-colors"
+                                title="Agregar a mis amigos"
+                              >
+                                <UserPlus className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleStartChatWithUser(user)}
+                              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors"
+                            >
+                              Chat
+                            </button>
+                          </div>
                         </div>
-                        <Plus className="w-4 h-4 text-indigo-400 shrink-0" />
-                      </button>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               ) : (
@@ -1055,18 +1202,26 @@ export default function App() {
                     </div>
                   </div>
 
-                  {activeChat.type === "group" && (
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(activeChat.invite_code);
-                        alert(`Código copiado: ${activeChat.invite_code}`);
-                      }}
-                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs text-indigo-300 rounded-xl border border-slate-700/60 font-medium flex items-center gap-1.5"
+                      onClick={() => setShowIPTVModal(true)}
+                      title="Abrir Reproductor IPTV & Multimedia"
+                      className="p-2 text-rose-300 hover:text-white bg-rose-600/20 hover:bg-rose-600/40 rounded-xl border border-rose-500/30 transition-colors"
                     >
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copiar Código</span>
+                      <Tv className="w-4 h-4" />
                     </button>
-                  )}
+
+                    {activeChat.type === "group" && (
+                      <button
+                        onClick={() => setShowShareGroupModal(true)}
+                        className="px-2.5 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-xs text-indigo-200 hover:text-white rounded-xl border border-indigo-400/40 font-medium flex items-center gap-1.5 transition-colors shadow-sm"
+                        title="Compartir grupo por enlace o código"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Compartir Grupo</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Área de Mensajes */}
@@ -1116,25 +1271,18 @@ export default function App() {
                             </div>
                           )}
 
-                          <div className={`max-w-[85%] md:max-w-[70%] p-3 rounded-2xl text-sm ${
+                          <div className={`max-w-[88%] md:max-w-[75%] p-3 rounded-2xl text-sm ${
                             isMe 
                               ? "bg-indigo-600 text-white rounded-br-none shadow-md shadow-indigo-950/40" 
                               : "bg-slate-900 border border-slate-800 text-slate-100 rounded-bl-none"
                           }`}>
-                            {msg.type === "image" && msg.media_url && (
-                              <img 
-                                src={msg.media_url} 
-                                alt="Imagen" 
-                                onClick={() => setLightboxImage(msg.media_url || null)}
-                                className="w-full max-h-60 object-cover rounded-xl mb-2 cursor-pointer hover:opacity-95 transition-opacity"
-                              />
-                            )}
-
-                            {msg.type === "audio" && msg.media_url ? (
-                              <AudioPlayer src={msg.media_url} isMe={isMe} />
-                            ) : (
-                              <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                            )}
+                            <MediaMessageBubble
+                              content={msg.content}
+                              type={msg.type as any}
+                              mediaUrl={msg.media_url}
+                              isMe={isMe}
+                              onImageClick={(url) => setLightboxImage(url)}
+                            />
 
                             {/* Pie del mensaje: Hora, indicador de lectura, etiqueta temporal */}
                             <div className={`flex items-center gap-1.5 mt-1 text-[10px] ${isMe ? "text-indigo-200 justify-end" : "text-slate-400"}`}>
@@ -1248,6 +1396,16 @@ export default function App() {
                         className="p-2.5 text-slate-400 hover:text-indigo-400 bg-slate-800 rounded-xl transition-colors shrink-0"
                       >
                         <ImageIcon className="w-5 h-5" />
+                      </button>
+
+                      {/* Botón de Enlace Multimedia / IPTV / YouTube / MP3 */}
+                      <button
+                        type="button"
+                        onClick={() => setShowMediaUrlModal(true)}
+                        title="Compartir Enlace Multimedia / IPTV / Video / YouTube / MP3"
+                        className="p-2.5 text-slate-400 hover:text-rose-400 bg-slate-800 rounded-xl transition-colors shrink-0"
+                      >
+                        <Tv className="w-5 h-5" />
                       </button>
 
                       {/* Selector de Autodestrucción de Mensaje */}
@@ -1532,6 +1690,46 @@ export default function App() {
           onProfileUpdated={(updatedProfile) => {
             setUserProfile(updatedProfile);
           }}
+        />
+      )}
+
+      {/* MODAL DE AGREGAR AMIGOS & PRIVACIDAD */}
+      {showAddFriendModal && currentUser && (
+        <AddFriendModal
+          currentUserId={currentUser.id}
+          friendsList={friendsList}
+          onFriendsUpdated={(updated) => setFriendsList(updated)}
+          hiddenUsers={hiddenUsers}
+          onHiddenUsersUpdated={(updated) => setHiddenUsers(updated)}
+          onClose={() => setShowAddFriendModal(false)}
+          onStartChat={(user) => {
+            handleStartChatWithUser(user);
+            setShowAddFriendModal(false);
+          }}
+        />
+      )}
+
+      {/* MODAL DE COMPARTIR GRUPO */}
+      {showShareGroupModal && activeChat && (
+        <ShareGroupModal
+          groupName={activeChat.name || "Grupo"}
+          inviteCode={activeChat.invite_code || ""}
+          onClose={() => setShowShareGroupModal(false)}
+        />
+      )}
+
+      {/* MODAL DE ENVIAR MULTIMEDIA / ENLACES / IPTV */}
+      {showMediaUrlModal && (
+        <MediaUrlModal
+          onClose={() => setShowMediaUrlModal(false)}
+          onSendMedia={handleSendMediaUrl}
+        />
+      )}
+
+      {/* MODAL FLOTANTE DE REPRODUCTOR IPTV & STREAMING */}
+      {showIPTVModal && (
+        <IPTVFloatingModal
+          onClose={() => setShowIPTVModal(false)}
         />
       )}
 

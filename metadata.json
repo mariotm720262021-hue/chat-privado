@@ -1,6 +1,6 @@
 {
   "name": "Chat Privado",
-  "description": "Aplicación web de chat privado con autodestrucción de mensajes, autenticación por teléfono y diseño estilo WhatsApp.",
+  "description": "Aplicación web de chat privado con autodestrucción de mensajes, notas de voz, grupos compartibles por URL, listas de amigos y privacidad, y reproductor IPTV/multimedia integrado.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

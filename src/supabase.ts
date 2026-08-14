@@ -88,12 +88,14 @@ export interface SupabaseConversation {
   expires_at?: string; // Para conversaciones con duración máxima (ej. 24h)
 }
 
+export type MessageMediaType = "text" | "image" | "audio" | "video" | "youtube" | "iptv";
+
 export interface SupabaseMessage {
   id: string;
   conversation_id: string;
   sender_id: string;
   content: string;
-  type: "text" | "image" | "audio";
+  type: MessageMediaType;
   media_url?: string;
   created_at: string;
   expires_at?: string; // Para mensajes temporales con autodestrucción
@@ -357,8 +359,13 @@ export async function ensureProfileExists(userId: string, force: boolean = false
 
 /**
  * Busca usuarios por nombre de usuario, correo o nombre visible.
+ * Oculta automáticamente a los usuarios que hayan sido bloqueados/ocultados mediante 'Ocultar de...'.
  */
-export async function searchProfiles(searchTerm: string, currentUserId: string): Promise<SupabaseProfile[]> {
+export async function searchProfiles(
+  searchTerm: string, 
+  currentUserId: string,
+  currentUserUsername?: string
+): Promise<SupabaseProfile[]> {
   if (!searchTerm.trim()) return [];
   const term = `%${searchTerm.trim().toLowerCase()}%`;
 
@@ -372,7 +379,41 @@ export async function searchProfiles(searchTerm: string, currentUserId: string):
     console.error("Error buscando usuarios:", error);
     return [];
   }
-  return data || [];
+
+  let profiles: SupabaseProfile[] = data || [];
+
+  // Filtrado de Privacidad: Ocultar de...
+  try {
+    // 1. Usuarios que el usuario actual ocultó
+    const myHiddenUsersRaw = localStorage.getItem(`hidden_users_${currentUserId}`);
+    const myHiddenUsers: string[] = myHiddenUsersRaw ? JSON.parse(myHiddenUsersRaw) : [];
+
+    // 2. Comprobar si el usuario buscado ocultó su perfil del usuario actual
+    const currentCleanUsername = currentUserUsername ? currentUserUsername.toLowerCase().replace("@", "") : "";
+
+    profiles = profiles.filter((p) => {
+      const pUsername = p.username?.toLowerCase() || "";
+      // Si yo lo oculté, no me aparece
+      if (myHiddenUsers.includes(pUsername)) return false;
+
+      // Si él me ocultó a mí (guardado en su lista de privacidad local en esta instancia/navegador)
+      const theirHiddenUsersRaw = localStorage.getItem(`hidden_users_${p.id}`);
+      if (theirHiddenUsersRaw) {
+        try {
+          const theirHidden: string[] = JSON.parse(theirHiddenUsersRaw);
+          if (currentCleanUsername && theirHidden.includes(currentCleanUsername)) {
+            return false; // Ocultar el perfil para que no lo encuentre
+          }
+        } catch (_) {}
+      }
+
+      return true;
+    });
+  } catch (err) {
+    console.warn("Aviso al filtrar privacidad de búsqueda:", err);
+  }
+
+  return profiles;
 }
 
 /**
@@ -663,37 +704,64 @@ export async function uploadAudioToStorage(audioBlob: Blob, userId: string): Pro
 }
 
 /**
- * Envía un mensaje (texto, imagen o nota de voz audio con expiración temporal)
+ * Envía un mensaje (texto, imagen, audio, video, youtube o IPTV con expiración opcional)
  */
 export async function sendMessage(
   conversationId: string,
   senderId: string,
   content: string,
-  type: "text" | "image" | "audio" = "text",
+  type: MessageMediaType = "text",
   mediaUrl?: string,
   burnSeconds?: number
 ) {
   await ensureProfileExists(senderId);
   const expiresAt = burnSeconds ? new Date(Date.now() + burnSeconds * 1000).toISOString() : null;
 
-  const { data, error } = await supabase
-    .from("messages")
-    .insert({
-      conversation_id: conversationId,
-      sender_id: senderId,
-      content,
-      type,
-      media_url: mediaUrl || null,
-      expires_at: expiresAt,
-      is_burned: false,
-      is_read: false,
-      status: "sent"
-    })
-    .select()
-    .single();
+  // Si la base de datos tiene una restricción de comprobación CHECK antigua (text, image, audio),
+  // se inserta con el tipo directo o se reintenta como 'text' guardando la URL en media_url/content.
+  try {
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({
+        conversation_id: conversationId,
+        sender_id: senderId,
+        content,
+        type,
+        media_url: mediaUrl || null,
+        expires_at: expiresAt,
+        is_burned: false,
+        is_read: false,
+        status: "sent"
+      })
+      .select()
+      .single();
 
-  if (error) throw error;
-  return data;
+    if (error) throw error;
+    return data;
+  } catch (err: any) {
+    // Si la restricción de tipo falla en la BD de Supabase del usuario
+    if (err.message?.includes("messages_type_check") || err.code === "23514") {
+      const { data: fallbackData, error: fallbackErr } = await supabase
+        .from("messages")
+        .insert({
+          conversation_id: conversationId,
+          sender_id: senderId,
+          content: content || mediaUrl || "",
+          type: "text",
+          media_url: mediaUrl || null,
+          expires_at: expiresAt,
+          is_burned: false,
+          is_read: false,
+          status: "sent"
+        })
+        .select()
+        .single();
+
+      if (fallbackErr) throw fallbackErr;
+      return fallbackData;
+    }
+    throw err;
+  }
 }
 
 /**
